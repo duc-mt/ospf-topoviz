@@ -6,7 +6,7 @@
 # Version:       1.0.0
 # License:       MIT
 # ==============================================================================
-# OSPF LSDB Monitor - settings
+# OSPF TopoViz - settings
 #
 # Credentials can also come from the environment, which then wins over this file:
 #   OSPF_MONITOR_USERNAME, OSPF_MONITOR_PASSWORD, OSPF_MONITOR_SECRET

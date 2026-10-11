@@ -1,4 +1,4 @@
-# OSPF LSDB Monitor
+# OSPF TopoViz
 
 Poll a seed router over SSH, parse its full OSPF LSDB, build a directed graph, diff it against the previous run, and render a topology diagram — all in one command.
 
@@ -16,7 +16,7 @@ python main.py --replay samples/vyos
 - **Partial-LSDB guard** — detects when the seed router has lost an adjacency and refuses to overwrite a good baseline with a degraded view
 - **Readable diagrams** — one line per link with the cost and interface address at each end, area clusters, automatic layout direction, diff highlighting
 - **Atomic state rotation** — `current_state.json` → `previous_state.json`, crash-safe
-- **Credential-safe** — passwords never have to touch disk; `OSPF_TRACKER_*` env vars override the config file
+- **Credential-safe** — passwords never have to touch disk; `OSPF_MONITOR_*` env vars override the config file
 
 ---
 
@@ -50,8 +50,8 @@ brew install graphviz
 ## Installation
 
 ```bash
-git clone https://github.com/duc-mt/ospf-lsdb-monitor.git
-cd ospf-lsdb-monitor
+git clone https://github.com/duc-mt/ospf-topoviz.git
+cd ospf-topoviz
 
 python3 -m venv venv
 source venv/bin/activate
@@ -249,7 +249,7 @@ python -m pytest tests/ -v
 ## Project Structure
 
 ```
-ospf-lsdb-monitor/
+ospf-topoviz/
 ├── main.py                   # CLI entry point & pipeline orchestrator
 ├── config/
 │   └── settings.yaml         # Device and guard configuration (template)
