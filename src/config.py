@@ -14,14 +14,18 @@ Notes:         Requires Python 3.8+
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from src import TrackerError
+
+logger = logging.getLogger("ospf_tracker")
 
 DEFAULT_CONFIG_PATH = Path("config/settings.yaml")
 
@@ -45,6 +49,8 @@ class ConfigError(TrackerError):
 def load_settings(path: str | os.PathLike, required: bool = True) -> dict[str, Any]:
     """Read the YAML settings file into a dict.
 
+    If path does not exist, automatically copies from path.name + '.example' if available.
+
     Args:
         path: Settings file.
         required: If False, a missing file yields ``{}`` (used by ``--replay``).
@@ -53,6 +59,17 @@ def load_settings(path: str | os.PathLike, required: bool = True) -> dict[str, A
         ConfigError: If the file is unreadable or not a YAML mapping.
     """
     path = Path(path)
+    if not path.exists():
+        example_path = path.parent / f"{path.name}.example"
+        if not example_path.exists():
+            example_path = path.parent / "settings.yaml.example"
+        if example_path.exists():
+            try:
+                shutil.copyfile(example_path, path)
+                logger.info("Created %s from %s", path, example_path.name)
+            except OSError as exc:
+                logger.warning("Could not copy %s to %s: %s", example_path.name, path.name, exc)
+
     try:
         with path.open("r", encoding="utf-8") as handle:
             settings = yaml.safe_load(handle)

@@ -21,6 +21,8 @@ output/*.svg
 !output/.gitkeep
 
 # Sensitive config / credentials
+config/settings.yaml
+!config/settings.yaml.example
 config/settings.local.yaml
 .env
 *.env
