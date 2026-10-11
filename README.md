@@ -96,7 +96,7 @@ run.bat           # Windows
 
 ## Configuration
 
-Copy and edit the defaults in [`config/settings.yaml`](config/settings.yaml):
+Edit `config/settings.yaml` (on first run, it is automatically initialized from `config/settings.yaml.example`). `config/settings.yaml` is excluded from version control so credentials are never committed:
 
 ```yaml
 device:
@@ -242,11 +242,45 @@ python main.py --replay samples/my_router --device-type cisco_ios
 
 ---
 
+## Console Result Tables
+
+Every run displays formatted summary tables with rounded box borders (`╭ ╮ ╰ ╯`), status indicators, and diff breakdowns:
+
+```text
+========================================================================
+ OSPF Topology Summary
+========================================================================
+ Source    : samples/vyos   (2026-10-11T02:42:04+00:00)
+ Topology  : 4 nodes, 6 directed links
+
+╭──────────────────┬──────────┬─────────┬─────────────┬─────────────╮
+│ COMPONENT        │ BASELINE │ CURRENT │ DELTA       │ STATUS      │
+├──────────────────┼──────────┼─────────┼─────────────┼─────────────┤
+│ Router Nodes     │       12 │       3 │ -9 routers  │ ✖ DEGRADED  │
+│ Transit Networks │        3 │       1 │ -2 networks │ ✖ DEGRADED  │
+│ Directed Links   │       33 │       6 │ -27 links   │ ✖ DEGRADED  │
+│ Metric Changes   │        - │       0 │ 0 unchanged │ ✔ UNCHANGED │
+╰──────────────────┴──────────┴─────────┴─────────────┴─────────────╯
+
+ Detailed Topology Changes:
+╭────────────┬────────────────────┬──────────────────────────────┬─────────────╮
+│ ACTION     │ ELEMENT            │ DETAILS                      │ STATUS      │
+├────────────┼────────────────────┼──────────────────────────────┼─────────────┤
+│ ✚ ADD NODE │ 10.0.0.1           │ type: router                 │ ✚ ADDED     │
+│ ✚ ADD NODE │ net 192.168.1.0/24 │ type: network                │ ✚ ADDED     │
+│ ✖ REM NODE │ 10.255.255.1       │ type: router                 │ ✖ REMOVED   │
+╰────────────┴────────────────────┴──────────────────────────────┴─────────────╯
+
+  ✖ Suspect Run  │  Diffs: 58  │  Nodes: 4  │  Links: 6
+```
+
+---
+
 ## Running Tests
 
 ```bash
 pip install pytest
-python -m pytest tests/ -v
+pytest
 ```
 
 ---
@@ -255,14 +289,18 @@ python -m pytest tests/ -v
 
 ```
 ospf-topoviz/
+├── run.sh                    # Universal launcher (Linux/macOS/WSL)
+├── run.bat                   # Universal launcher (Windows CMD/PowerShell)
 ├── main.py                   # CLI entry point & pipeline orchestrator
 ├── config/
-│   └── settings.yaml         # Device and guard configuration (template)
+│   ├── settings.yaml.example # Tracked template configuration
+│   └── settings.yaml         # User configuration (auto-copied, git-ignored)
 ├── src/
-│   ├── config.py             # Settings loading and validation
+│   ├── config.py             # Settings loading, validation & auto-initialization
 │   ├── poller.py             # SSH (DevicePoller) and file (FilePoller) data sources
 │   ├── parser.py             # Dispatches to the right vendor adapter
 │   ├── graph_engine.py       # NetworkX graph, diff, guard, state persistence
+│   ├── report.py             # Modern box-drawing result table renderer
 │   ├── visualizer.py         # Graphviz rendering
 │   └── vendors/              # Per-platform LSDB parsers
 │       ├── base.py           # VendorProfile base class
