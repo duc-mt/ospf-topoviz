@@ -8,6 +8,7 @@ netconfig and netbackup.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from typing import Any, Sequence
 
@@ -121,6 +122,47 @@ def render_table(
     # Bottom border
     lines.append(border("╰", "┴", "╯"))
     return "\n".join(lines)
+
+
+_AREA_TAG = re.compile(r"^area\s*(\d+)$", re.IGNORECASE)
+
+
+def seed_role(tags: Sequence[str]) -> str:
+    """Turn a seed's tags into the ROLE column: ``["Area0", "Core"]`` -> ``Area 0 Core``."""
+    words = []
+    for tag in tags or ():
+        m = _AREA_TAG.match(str(tag).strip())
+        words.append(f"Area {m.group(1)}" if m else str(tag))
+    return " ".join(words) or "-"
+
+
+def _seed_status_cell(status: str) -> tuple[str, str]:
+    """``(text, color)`` for a seed status, using the same badges as the other tables."""
+    if status == "SUCCEEDED":
+        return "✔ SUCCEEDED", ANSI_GREEN
+    if status == "SKIPPED":
+        return "○ SKIPPED", ANSI_DIM
+    return f"✖ {status}", ANSI_RED
+
+
+def render_seed_table(seeds: Sequence[Any]) -> str:
+    """Seed Health table: one row per seed router and how its poll went.
+
+    Args:
+        seeds: ``SeedResult``-like objects (``host``, ``device_type``, ``status``, ``duration``,
+            ``lsas``, ``neighbors``, ``tags``). A skipped seed (fallback mode, never needed) shows dashes.
+    """
+    headers = ["SEED ROUTER", "PLATFORM", "STATUS", "DURATION", "LSAS / NBRS", "ROLE"]
+    alignments = ["left", "left", "left", "right", "left", "left"]
+    rows, colors = [], []
+    for seed in seeds:
+        status_text, status_color = _seed_status_cell(seed.status)
+        skipped = seed.status == "SKIPPED"
+        duration = "-" if skipped else f"{seed.duration:.1f}s"
+        counts = "-" if skipped else f"{seed.lsas} / {seed.neighbors} nbrs"
+        rows.append([seed.host, seed.device_type, status_text, duration, counts, seed_role(seed.tags)])
+        colors.append([None, None, status_color, None, None, None])
+    return render_table(headers, rows, alignments, colors)
 
 
 def render_topology_summary_table(graph, diff) -> str:
@@ -282,17 +324,15 @@ def render_quality_table(graph) -> str | None:
     return render_table(headers, rows, alignments, colors)
 
 
-def render_summary_banner(raw, graph, diff) -> str:
-    """Render consistent bottom summary banner with badge counts."""
+def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) -> str:
+    """Render consistent bottom summary banner with badge counts.
+
+    With ``seeds`` (a live multi-seed run) the first badge reports how many seed routers passed,
+    ``✔ Seeds: 2/3 Passed``, in place of the topology verdict; a suspect run is still called out at the
+    end of the line. Without it (``--replay``) the banner is the plain topology verdict.
+    """
     num_nodes = graph.number_of_nodes()
     num_edges = graph.number_of_edges()
-
-    if diff.suspect_reasons:
-        status_badge = colorize("✖ Suspect Run", ANSI_RED)
-    elif diff.has_changes:
-        status_badge = colorize("⚠ Changes Detected", ANSI_YELLOW)
-    else:
-        status_badge = colorize("✔ Stable Topology", ANSI_GREEN)
 
     total_diffs = len(diff.added_nodes) + len(diff.removed_nodes) + len(diff.added_edges) + len(diff.removed_edges) + len(diff.changed_metrics)
     diff_badge = f"Diffs: {total_diffs}"
@@ -301,4 +341,24 @@ def render_summary_banner(raw, graph, diff) -> str:
     else:
         diff_badge = colorize(diff_badge, ANSI_GREEN)
 
-    return f"  {status_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+    if seeds is None:
+        if diff.suspect_reasons:
+            status_badge = colorize("✖ Suspect Run", ANSI_RED)
+        elif diff.has_changes:
+            status_badge = colorize("⚠ Changes Detected", ANSI_YELLOW)
+        else:
+            status_badge = colorize("✔ Stable Topology", ANSI_GREEN)
+        return f"  {status_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+
+    polled = [s for s in seeds if s.status != "SKIPPED"]  # a seed that was never needed is neither pass nor fail
+    passed = sum(1 for s in polled if s.status == "SUCCEEDED")
+    if passed == len(polled):
+        seed_badge = colorize(f"✔ Seeds: {passed}/{len(polled)} Passed", ANSI_GREEN)
+    elif passed:
+        seed_badge = colorize(f"⚠ Seeds: {passed}/{len(polled)} Passed", ANSI_YELLOW)
+    else:
+        seed_badge = colorize(f"✖ Seeds: {passed}/{len(polled)} Passed", ANSI_RED)
+    line = f"  {seed_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+    if diff.suspect_reasons:
+        line += "  │  " + colorize("✖ Suspect Run", ANSI_RED)
+    return line

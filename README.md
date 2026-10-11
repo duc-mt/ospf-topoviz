@@ -1,6 +1,6 @@
 # OSPF TopoViz
 
-Poll a seed router over SSH, parse its full OSPF LSDB, build a directed graph, diff it against the previous run, and render a topology diagram — all in one command.
+Poll one or more seed routers over SSH, parse their OSPF LSDB, build a directed graph, diff it against the previous run, and render a topology diagram — all in one command.
 
 ```
 python main.py --replay samples/vyos
@@ -12,8 +12,9 @@ python main.py --replay samples/vyos
 
 - **Multi-vendor** — Cisco IOS/IOS-XE/IOS-XR/NX-OS, Juniper JunOS, Arista EOS, VyOS/FRR, Huawei VRP
 - **Live polling** over SSH (Netmiko) or **offline replay** from saved CLI output
+- **Multi-seed polling** — `fallback` uses the first seed that answers (high availability); `merge` polls several seeds in parallel and combines their LSDBs and neighbour tables into one view, across areas
 - **Change detection** — added/removed nodes, added/removed links, metric changes
-- **Partial-LSDB guard** — detects when the seed router has lost an adjacency and refuses to overwrite a good baseline with a degraded view
+- **Partial-LSDB guard** — detects when the seed router has lost an adjacency (or a merge seed did not answer) and refuses to overwrite a good baseline with a degraded view
 - **Readable diagrams** — one line per link with the cost and interface address at each end, area clusters, automatic layout direction, diff highlighting
 - **Atomic state rotation** — `current_state.json` → `previous_state.json`, crash-safe
 - **Credential-safe** — passwords never have to touch disk; `OSPF_MONITOR_*` env vars override the config file
@@ -99,17 +100,24 @@ run.bat           # Windows
 Edit `config/settings.yaml` (on first run, it is automatically initialized from `config/settings.yaml.example`). `config/settings.yaml` is excluded from version control so credentials are never committed:
 
 ```yaml
-device:
-  host: 10.255.255.6       # seed router management IP or hostname
-  username: admin
-  password: ""             # or leave blank and use env vars (see below)
-  secret: ""               # enable secret — leave empty if already in privileged mode
-  device_type: vyos        # see supported types below
-  port: 22
-  conn_timeout: 15
-  auth_timeout: 20
-  banner_timeout: 20
-  read_timeout: 120        # large LSDBs can be slow
+seeds:
+  mode: merge              # merge | fallback  (see "Multi-seed polling" below)
+  concurrency: 5           # merge mode: SSH sessions at the same time
+  timeout_per_device: 10   # seconds per connection stage (TCP, banner, login)
+  username: admin          # optional: shared by every device that does not set its own
+  devices:
+    - host: 10.255.255.6   # seed router management IP or hostname
+      device_type: vyos    # see supported types below
+      password: ""         # or leave blank and use env vars (see below)
+      priority: 1          # fallback order, lowest first (default: order written)
+      tags: ["Area0", "Core"]   # shown in the ROLE column of the result table
+    - host: 10.255.255.10
+      device_type: vyos
+      password: ""
+      priority: 2
+      tags: ["Area1", "Edge"]
+      # also per device: name, secret, port, conn_timeout, auth_timeout, banner_timeout,
+      #                  read_timeout (large LSDBs can be slow), commands
 
 ospf_process_id: 1         # omit for platforms without process IDs (JunOS, VyOS)
 
@@ -127,6 +135,25 @@ visualization:             # every key optional; these are the defaults
   # names:                 # optional host names shown above the router ID
   #   10.255.255.1: core-1
 ```
+
+### Multi-seed polling
+
+| | `fallback` | `merge` |
+|---|---|---|
+| Use it for | one network view, with spare seeds in case the first is down | seeds in different areas, or several core routers, combined into one diagram |
+| Polls | seeds one at a time in `priority` order, stops at the first that works | every seed, up to `concurrency` at once |
+| Seeds not needed | shown as `SKIPPED` | – |
+| A seed fails | next seed is tried (also if its output cannot be parsed) | the others carry on; the run is flagged as a possible partial LSDB |
+
+**Merging.** LSAs are keyed by originator and area. When two seeds report the same LSA the newer one is kept (higher sequence number; on a tie a MaxAge copy, else the younger one). LSAs of different areas are all kept, so an ABR keeps one router LSA per area. The neighbour tables of all seeds label the interface of every link they cover, in both directions.
+
+**A seed that cannot be polled** (timeout, bad login, SSH error, unparseable output) never stops the run. In `merge` mode it leaves a hole in the picture, so — like any partial LSDB — the run is marked suspect, the baseline is **not** overwritten (`--accept-changes` commits it anyway) and the exit code is `3`. In `fallback` mode a failed seed is expected and does not raise the flag. If *no* seed answers the run fails with exit code `1`; `seeds.require_all: true` makes any failed merge seed fatal.
+
+**Timeouts.** `timeout_per_device` is the wait for each connection stage (TCP connect, SSH banner, login) and fills `conn_timeout` / `auth_timeout` / `banner_timeout` unless a device sets its own. LSDB commands keep `read_timeout`; it is not a cap on the whole poll.
+
+**Credentials.** For each seed: its own non-empty value, then the `OSPF_MONITOR_*` variable, then the shared value under `seeds:`, then the legacy `device:` block. (A device's own password therefore beats the environment — unlike the single `device:` form, below.)
+
+**Existing configs keep working.** Without `seeds.devices` the single `device:` block is polled exactly as before.
 
 ### Supported device types
 
@@ -158,7 +185,7 @@ OSPF does not carry interface names or speeds, so the interface address (the "Li
 
 ### Credentials via environment variables
 
-These override anything in `settings.yaml` — use them in CI or to avoid storing passwords on disk:
+With the single `device:` block these override anything in `settings.yaml`; with `seeds:` they fill in whatever a device leaves empty (see *Multi-seed polling*). Use them in CI or to avoid storing passwords on disk:
 
 ```bash
 export OSPF_MONITOR_USERNAME=admin
@@ -176,9 +203,14 @@ python main.py [OPTIONS]
 
 Options:
   --config PATH         Settings file (default: config/settings.yaml)
-  --device-type TYPE    Override device.device_type from the settings file
+  --device-type TYPE    Override device_type of every seed from the settings file
+  --mode {merge,fallback}
+                        Override seeds.mode
+  --seeds HOST[,HOST...]
+                        Poll only these seed routers, in this priority order. A host not in the
+                        settings file reuses the shared / legacy credentials and device type
   --replay DIR          Parse saved CLI output instead of connecting via SSH
-  --save-raw DIR        Also write the raw CLI output to DIR (replayable later)
+  --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
   --output PATH         Diagram output path; extension sets format (png, svg, pdf, ...) (default: output/topology.png)
   --layout ENGINE       Graphviz layout engine: dot, neato, fdp, sfdp, circo, ... (default: dot)
   --accept-changes      Commit this run as the new baseline even if the guard flagged it
@@ -244,7 +276,22 @@ python main.py --replay samples/my_router --device-type cisco_ios
 
 ## Console Result Tables
 
-Every run displays formatted summary tables with rounded box borders (`╭ ╮ ╰ ╯`), status indicators, and diff breakdowns:
+Every run displays formatted summary tables with rounded box borders (`╭ ╮ ╰ ╯`), status indicators, and diff breakdowns. Live runs start with the **Seed Routers** table — one row per seed with its status (`SUCCEEDED`, `TIMEOUT`, `AUTH FAILED`, `FAILED`, or `SKIPPED` for a fallback seed that was not needed), poll time, LSAs / neighbour rows contributed and role (from `tags`) — and the bottom line counts the seeds that passed:
+
+```text
+ Seed Routers:
+╭─────────────┬──────────┬─────────────┬──────────┬─────────────┬─────────────╮
+│ SEED ROUTER │ PLATFORM │ STATUS      │ DURATION │ LSAS / NBRS │ ROLE        │
+├─────────────┼──────────┼─────────────┼──────────┼─────────────┼─────────────┤
+│ 192.0.2.1   │ vyos     │ ✔ SUCCEEDED │     2.4s │ 2 / 1 nbrs  │ Area 0 Core │
+│ 192.0.2.3   │ vyos     │ ✔ SUCCEEDED │     2.1s │ 3 / 2 nbrs  │ Area 1 Edge │
+│ 192.0.2.10  │ vyos     │ ✖ TIMEOUT   │    10.0s │ 0 / 0 nbrs  │ Area 1 Edge │
+╰─────────────┴──────────┴─────────────┴──────────┴─────────────┴─────────────╯
+
+  ⚠ Seeds: 2/3 Passed  │  Diffs: 0  │  Nodes: 4  │  Links: 6
+```
+
+The rest of a run looks like this (`--replay` runs have no seed table and keep the plain `✔ Stable Topology` verdict at the bottom):
 
 ```text
 ========================================================================
@@ -297,8 +344,8 @@ ospf-topoviz/
 │   └── settings.yaml         # User configuration (auto-copied, git-ignored)
 ├── src/
 │   ├── config.py             # Settings loading, validation & auto-initialization
-│   ├── poller.py             # SSH (DevicePoller) and file (FilePoller) data sources
-│   ├── parser.py             # Dispatches to the right vendor adapter
+│   ├── poller.py             # SSH (DevicePoller), file (FilePoller) and multi-seed (MultiDevicePoller) sources
+│   ├── parser.py             # Dispatches to the right vendor adapter; merge_lsdbs() combines seeds
 │   ├── graph_engine.py       # NetworkX graph, diff, guard, state persistence
 │   ├── report.py             # Modern box-drawing result table renderer
 │   ├── visualizer.py         # Graphviz rendering

@@ -14,10 +14,13 @@ Notes:         Requires Python 3.8+
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,8 @@ from src.config import (
     DEFAULT_CONFIG_PATH,
     ENV_OVERRIDES,
     ConfigError,
+    SeedsOptions,
+    device_entries,
     load_settings,
     parse_process_id,
 )
@@ -48,8 +53,13 @@ __all__ = [
     "ConfigError",
     "DevicePoller",
     "FilePoller",
+    "MultiDevicePoller",
+    "PollResult",
+    "PollerAuthError",
     "PollerError",
+    "PollerTimeoutError",
     "RawLSDB",
+    "SeedResult",
 ]
 
 
@@ -61,6 +71,14 @@ def _first_line(exc: BaseException) -> str:
 
 class PollerError(TrackerError):
     """Raised when the device cannot be reached or returns unusable output."""
+
+
+class PollerTimeoutError(PollerError):
+    """The device did not answer in time (TCP connect, SSH banner or a command)."""
+
+
+class PollerAuthError(PollerError):
+    """The device refused the credentials."""
 
 
 @dataclass(frozen=True)
@@ -98,6 +116,7 @@ class DevicePoller(BasePoller):
         *,
         device: dict[str, Any] | None = None,
         collect_neighbors: bool = True,
+        apply_env: bool = True,
     ) -> None:
         """Load and validate the settings.
 
@@ -107,6 +126,8 @@ class DevicePoller(BasePoller):
             settings: Already-loaded settings, to avoid reading the file twice.
             device: One already-resolved router entry; skips reading settings.
             collect_neighbors: Also run the platform's neighbour-table command (best effort).
+            apply_env: Let ``OSPF_MONITOR_*`` override the credentials (the single-device rule). Seed
+                entries are resolved by ``device_entries`` - own value, then environment - so it passes False.
 
         Raises:
             ConfigError: If the settings are missing, unreadable or incomplete.
@@ -123,14 +144,16 @@ class DevicePoller(BasePoller):
         else:
             device = dict(device)
 
-        for key, env_name in ENV_OVERRIDES.items():
-            if os.environ.get(env_name):
-                device[key] = os.environ[env_name]
+        if apply_env:
+            for key, env_name in ENV_OVERRIDES.items():
+                if os.environ.get(env_name):
+                    device[key] = os.environ[env_name]
 
         missing = [k for k in ("host", "username", "password") if not device.get(k)]
         if missing:
+            which = f" for seed {device['host']}" if device.get("host") else ""
             raise ConfigError(
-                f"{self.config_path}: missing device setting(s): {', '.join(missing)}"
+                f"{self.config_path}: missing device setting(s){which}: {', '.join(missing)}"
             )
 
         try:
@@ -146,6 +169,11 @@ class DevicePoller(BasePoller):
 
         self.name = str(device.get("name") or device["host"])
         self.host = str(device["host"])
+        try:
+            self.priority = int(device.get("priority", 1))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{self.config_path}: seed {self.host}: priority must be an integer ({exc})") from exc
+        self.tags: tuple[str, ...] = tuple(str(t) for t in (device.get("tags") or ()))
         self.device_type = str(device_type or device.get("device_type", "cisco_ios"))
         self.process_id = parse_process_id(device.get("ospf_process_id") or settings.get("ospf_process_id"))
         self.profile: VendorProfile = get_profile(self.device_type)
@@ -171,14 +199,28 @@ class DevicePoller(BasePoller):
         config_path: str | os.PathLike = DEFAULT_CONFIG_PATH,
         device_type: str | None = None,
         settings: dict[str, Any] | None = None,
-    ) -> list["DevicePoller"]:
-        """Build one poller per router in the settings (``device:`` and/or ``devices:``)."""
+        hosts: Sequence[str] | None = None,
+    ) -> list[DevicePoller]:
+        """Build one poller per seed router, sorted by priority.
+
+        Routers come from ``seeds.devices``, from the legacy ``device:`` block, or from ``hosts``
+        (``--seeds``); see ``config.device_entries`` for how credentials and timeouts are resolved.
+        """
         if settings is None:
             settings = load_settings(config_path)
-        entries = device_entries(settings, str(config_path))
+        entries = device_entries(settings, str(config_path), hosts=hosts, device_type=device_type)
         neighbors = PollingOptions.from_settings(settings.get("polling")).neighbors
-        return [cls(config_path, device_type=device_type, settings=settings, device=entry, collect_neighbors=neighbors)
-                for entry in entries]
+        return [
+            cls(
+                config_path,
+                device_type=device_type,
+                settings=settings,
+                device=entry,
+                collect_neighbors=neighbors,
+                apply_env=bool(entry.get("_legacy")),
+            )
+            for entry in entries
+        ]
 
     def _connection_params(self) -> dict[str, Any]:
         return {
@@ -218,11 +260,11 @@ class DevicePoller(BasePoller):
                         logger.warning("%s: could not read the neighbour table (%s); continuing without it",
                                        self.host, _first_line(exc))
         except NetmikoAuthenticationException as exc:
-            raise PollerError(
+            raise PollerAuthError(
                 f"Authentication failed for {self.host}: check username, password and enable secret"
             ) from exc
         except (TimeoutError, NetmikoTimeoutException, ReadTimeout) as exc:
-            raise PollerError(
+            raise PollerTimeoutError(
                 f"Timed out talking to {self.host}: {_first_line(exc)}. Check reachability, SSH access "
                 f"and the timeout settings in {self.config_path}"
             ) from exc
@@ -261,9 +303,6 @@ class DevicePoller(BasePoller):
         return output
 
 
-import concurrent.futures
-
-
 class FilePoller(BasePoller):
     """Replay previously saved CLI output (offline testing, demos, regression tests)."""
 
@@ -282,6 +321,11 @@ class FilePoller(BasePoller):
         self.device_type = device_type
         self.process_id = process_id
         self.read_timeout = read_timeout
+        # Lets a replay run through MultiDevicePoller as a single seed.
+        self.host = str(self.directory)
+        self.name = "replay"
+        self.priority = 1
+        self.tags: tuple[str, ...] = ()
 
     def _read_with_timeout(self, path: Path) -> str:
         if not path.exists():
@@ -343,3 +387,217 @@ class PollingOptions:
         if options.concurrency < 1:
             raise ConfigError("polling.concurrency must be 1 or greater")
         return options
+
+
+# --------------------------------------------------------------- multi-seed polling
+STATUS_OK = "SUCCEEDED"
+STATUS_TIMEOUT = "TIMEOUT"
+STATUS_AUTH = "AUTH FAILED"
+STATUS_FAILED = "FAILED"
+STATUS_SKIPPED = "SKIPPED"  # fallback mode: an earlier seed already answered, this one was never tried
+
+
+@dataclass
+class SeedResult:
+    """What happened to one seed router during a run (a row of the seed health table)."""
+
+    name: str
+    host: str
+    device_type: str
+    priority: int = 1
+    tags: tuple[str, ...] = ()
+    status: str = STATUS_SKIPPED
+    duration: float = 0.0  # seconds spent polling it (0 if it was skipped)
+    error: str | None = None
+    raw: RawLSDB | None = None
+    #: Whatever the ``ingest`` callback made of ``raw`` (the parsed LSDB, ...).
+    parsed: Any = None
+    lsas: int = 0  # router + network LSAs this seed contributed
+    neighbors: int = 0  # neighbour-table rows this seed contributed
+
+    @property
+    def ok(self) -> bool:
+        return self.status == STATUS_OK
+
+    @property
+    def failed(self) -> bool:
+        return self.status not in (STATUS_OK, STATUS_SKIPPED)
+
+
+@dataclass
+class PollResult:
+    """Outcome of a multi-seed poll: one ``SeedResult`` per configured seed, in priority order."""
+
+    mode: str
+    seeds: list[SeedResult] = field(default_factory=list)
+
+    @property
+    def succeeded(self) -> list[SeedResult]:
+        return [s for s in self.seeds if s.ok]
+
+    @property
+    def failed(self) -> list[SeedResult]:
+        return [s for s in self.seeds if s.failed]
+
+    @property
+    def raws(self) -> list[RawLSDB]:
+        """The raw LSDB of every seed that answered (exactly one in fallback mode)."""
+        return [s.raw for s in self.succeeded if s.raw is not None]
+
+    def failure_report(self) -> str:
+        """One line per failed seed, for error messages."""
+        return "; ".join(f"{s.host}: {s.error or s.status}" for s in self.failed) or "no seed answered"
+
+
+class MultiDevicePoller:
+    """Poll several seed routers: either the first one that answers, or all of them.
+
+    * ``fallback`` - try the seeds in priority order and stop at the first one that works; the rest are
+      reported as ``SKIPPED``. This is plain high availability for a single view of the network.
+    * ``merge`` - poll every seed at once (up to ``concurrency`` SSH sessions) so their LSDBs and
+      neighbour tables can be combined into one picture, e.g. seeds sitting in different areas.
+
+    A failing seed never stops the others and never raises: ``poll()`` always returns a ``PollResult``
+    and the caller decides what an incomplete result means. ``ingest`` (optional) turns each raw LSDB into
+    something the caller needs (usually the parsed LSDB). It runs on the calling thread and, if it raises
+    a ``TrackerError``, that seed counts as failed - so in fallback mode an unusable answer also moves on
+    to the next seed.
+    """
+
+    def __init__(
+        self,
+        pollers: Sequence[Any],
+        mode: str = "merge",
+        concurrency: int = 5,
+        ingest: Callable[[Any, RawLSDB], Any] | None = None,
+        require_all: bool = False,
+    ) -> None:
+        """
+        Args:
+            pollers: ``DevicePoller``-like objects (``poll()``, ``host``, ``name``, ``device_type``,
+                ``priority``, ``tags``).
+            mode: ``"merge"`` or ``"fallback"``.
+            concurrency: Parallel SSH sessions in merge mode.
+            ingest: Optional ``(poller, raw) -> parsed`` callback; its result lands in ``SeedResult.parsed``.
+            require_all: Merge mode: the caller should abort if any seed fails (kept here for the caller).
+
+        Raises:
+            ConfigError: If there is no seed, the mode is unknown or ``concurrency`` is below 1.
+        """
+        if not pollers:
+            raise ConfigError("No seed routers to poll")
+        if mode not in ("merge", "fallback"):
+            raise ConfigError(f"Unknown seed mode {mode!r}: use 'merge' or 'fallback'")
+        if concurrency < 1:
+            raise ConfigError("concurrency must be 1 or greater")
+        self.pollers = sorted(pollers, key=lambda p: getattr(p, "priority", 0))  # stable for equal priorities
+        self.mode = mode
+        self.concurrency = concurrency
+        self.ingest = ingest
+        self.require_all = require_all
+
+    @classmethod
+    def from_settings(
+        cls,
+        config_path: str | os.PathLike = DEFAULT_CONFIG_PATH,
+        settings: dict[str, Any] | None = None,
+        mode: str | None = None,
+        hosts: Sequence[str] | None = None,
+        device_type: str | None = None,
+        ingest: Callable[[Any, RawLSDB], Any] | None = None,
+    ) -> MultiDevicePoller:
+        """Build from settings.yaml; ``mode`` / ``hosts`` / ``device_type`` are the CLI overrides."""
+        if settings is None:
+            settings = load_settings(config_path)
+        options = SeedsOptions.from_settings(settings, mode=mode)
+        pollers = DevicePoller.from_settings(config_path, device_type=device_type, settings=settings, hosts=hosts)
+        return cls(
+            pollers,
+            mode=options.mode,
+            concurrency=options.concurrency,
+            ingest=ingest,
+            require_all=options.require_all,
+        )
+
+    # ----------------------------------------------------------------- polling
+    def poll(self) -> PollResult:
+        """Poll according to ``mode`` and report how every seed fared."""
+        results = [
+            SeedResult(
+                name=str(getattr(p, "name", p.host)),
+                host=str(p.host),
+                device_type=str(getattr(p, "device_type", "")),
+                priority=int(getattr(p, "priority", 0)),
+                tags=tuple(getattr(p, "tags", ())),
+            )
+            for p in self.pollers
+        ]
+        if self.mode == "fallback":
+            self._poll_fallback(results)
+        else:
+            self._poll_merge(results)
+        return PollResult(mode=self.mode, seeds=results)
+
+    def _poll_fallback(self, results: list[SeedResult]) -> None:
+        for poller, result in zip(self.pollers, results):
+            raw, error, duration = self._attempt(poller)
+            result.duration = duration
+            if error is None and self._accept(poller, result, raw):
+                if len(results) > 1:
+                    logger.info("Seed %s answered; the remaining seeds are not needed", result.host)
+                return
+            if error is not None:
+                self._fail(result, error)
+
+    def _poll_merge(self, results: list[SeedResult]) -> None:
+        workers = max(1, min(self.concurrency, len(self.pollers)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix="seed") as pool:
+            futures = [pool.submit(self._attempt, p) for p in self.pollers]
+            outcomes = [f.result() for f in futures]  # _attempt never raises
+        for poller, result, (raw, error, duration) in zip(self.pollers, results, outcomes):
+            result.duration = duration
+            if error is not None:
+                self._fail(result, error)
+            else:
+                self._accept(poller, result, raw)
+
+    @staticmethod
+    def _attempt(poller: Any) -> tuple[RawLSDB | None, Exception | None, float]:
+        """Poll one seed, timing it. Any failure is returned, not raised, so one bad seed cannot stop the rest."""
+        started = time.monotonic()
+        try:
+            return poller.poll(), None, time.monotonic() - started
+        except Exception as exc:  # noqa: BLE001 - the seed boundary: report it, keep going
+            return None, exc, time.monotonic() - started
+
+    def _accept(self, poller: Any, result: SeedResult, raw: RawLSDB | None) -> bool:
+        """Record a successful poll and run ``ingest`` on it; returns False (seed failed) if that raises."""
+        if raw is None:  # a poller that returned nothing is a failed poller
+            self._fail(result, PollerError(f"{result.host} returned no data"))
+            return False
+        if self.ingest is not None:
+            try:
+                result.parsed = self.ingest(poller, raw)
+            except TrackerError as exc:
+                result.raw = raw  # keep it: it is exactly what --save-raw is for when the parser chokes
+                self._fail(result, PollerError(f"could not use the output of {result.host}: {exc}"))
+                return False
+        result.raw = raw
+        result.status = STATUS_OK
+        return True
+
+    @staticmethod
+    def _fail(result: SeedResult, error: Exception) -> None:
+        if isinstance(error, PollerTimeoutError):
+            result.status = STATUS_TIMEOUT
+        elif isinstance(error, PollerAuthError):
+            result.status = STATUS_AUTH
+        else:
+            result.status = STATUS_FAILED
+        if isinstance(error, TrackerError):
+            result.error = str(error)
+            logger.warning("Seed %s failed (%s): %s", result.host, result.status, error)
+        else:  # a bug or an exception we do not know: keep the traceback
+            result.error = f"unexpected {type(error).__name__}: {error}"
+            logger.warning("Seed %s failed (%s): %s", result.host, result.status, result.error, exc_info=error)
+        result.parsed = None

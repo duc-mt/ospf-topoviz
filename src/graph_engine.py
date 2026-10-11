@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -291,8 +292,19 @@ class GraphEngine:
         """Nodes that have an LSA of their own in the database (not just a reference to them)."""
         return {n for n, attrs in graph.nodes(data=True) if attrs.get("resolved", True)}
 
-    def assess(self, old: nx.DiGraph | None, new: nx.DiGraph) -> list[str]:
+    def assess(
+        self,
+        old: nx.DiGraph | None,
+        new: nx.DiGraph,
+        partial_sources: Sequence[str] = (),
+    ) -> list[str]:
         """Return reasons why ``new`` looks like a partial LSDB (empty list = looks fine).
+
+        ``partial_sources`` names seed routers that should have contributed but could not be polled
+        (multi-seed merge). Their part of the network is simply absent, which the retention check below
+        cannot always tell from a real outage (losing 3 of 16 routers stays above the threshold), so
+        any such seed makes the run suspect. It follows the guard's switch and, like every other
+        check, needs a baseline to compare with.
 
         Retention counts only nodes that still have their *own* LSA. In a partial LSDB the
         surviving LSAs keep referring to the missing routers, so those routers stay in the
@@ -302,6 +314,11 @@ class GraphEngine:
         if not guard.enabled or old is None:
             return []
         reasons = []
+        if partial_sources:
+            reasons.append(
+                f"{len(partial_sources)} seed router(s) could not be polled ({', '.join(partial_sources)}); "
+                "the merged view may be missing part of the network"
+            )
         known = self._described(old)
         if known:
             kept = len(known & self._described(new))
@@ -326,6 +343,7 @@ class GraphEngine:
         parsed: dict[str, Any],
         accept_changes: bool = False,
         dry_run: bool = False,
+        partial_sources: Sequence[str] = (),
     ) -> tuple[nx.DiGraph, TopologyDiff]:
         """Build the graph, diff it against the baseline and (if trustworthy) save it.
 
@@ -333,6 +351,7 @@ class GraphEngine:
             parsed: The parser's standardized dictionary.
             accept_changes: Commit this run as the new baseline even if the guard flagged it.
             dry_run: Build and diff without writing any state files.
+            partial_sources: Seed routers that failed to answer; see ``assess``.
 
         Returns:
             ``(graph, diff)``. ``diff.suspect_reasons`` / ``diff.baseline_updated`` tell
@@ -345,7 +364,7 @@ class GraphEngine:
                 self.previous_path
             )  # crash recovery / first run after rotation
         diff = self.compare(baseline, graph)
-        diff.suspect_reasons = self.assess(baseline, graph)
+        diff.suspect_reasons = self.assess(baseline, graph, partial_sources)
 
         if dry_run:
             diff.baseline_updated = False

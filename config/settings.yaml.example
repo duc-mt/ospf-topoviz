@@ -12,13 +12,50 @@
 #   OSPF_MONITOR_USERNAME, OSPF_MONITOR_PASSWORD, OSPF_MONITOR_SECRET
 # Do not commit real credentials into git.
 
-device:
-  host: ""                       # seed router management IP or DNS name
-  username: admin
-  password: ""
-  secret: ""                 # enable secret; leave empty if the login lands in privileged mode
+# ---- Seed routers -------------------------------------------------------------------------------
+# One or more routers whose OSPF database is read. "merge" polls them all and combines what they see
+# (seeds in different areas -> one diagram of the whole network); "fallback" uses the first seed, by
+# priority, that answers (high availability for a single view). --mode and --seeds override these.
+seeds:
+  mode: merge                # merge | fallback
+  concurrency: 5             # merge mode: SSH sessions at the same time
+  timeout_per_device: 10     # seconds to wait for each connection stage (TCP, SSH banner, login);
+                             #   LSDB commands keep read_timeout. A device may set its own conn_timeout etc.
+  # require_all: false       # merge mode: abort instead of carrying on when a seed fails
+  username: admin            # shared by every device below that does not set its own
 
-  # Netmiko device type = which platform parser and commands are used:
+  # Settings written here apply to every device below that does not set its own:
+  #   device_type, username, password, secret, port, ospf_process_id, *_timeout, commands
+  # Credentials: a device's own value, else OSPF_MONITOR_USERNAME / _PASSWORD / _SECRET, else the value here.
+  devices:
+    - host: "10.255.255.6"
+      device_type: vyos      # Netmiko device type = platform parser and commands (list below)
+      username: admin
+      password: ""           # empty -> OSPF_MONITOR_PASSWORD
+      priority: 1            # fallback order, lowest first (default: the order written here)
+      tags: ["Area0", "Core"]    # shown in the ROLE column of the result table
+    - host: "10.255.255.4"
+      device_type: vyos
+      username: admin
+      password: ""
+      priority: 2
+      tags: ["Area0", "Transit"]
+    - host: "10.255.255.10"
+      device_type: vyos
+      priority: 3
+      tags: ["Area1", "Edge"]
+
+  # Optional per-device settings:
+  #   name: core-1             # label used in logs (default: host)
+  #   secret: ""               # enable secret; leave empty if the login lands in privileged mode
+  #   port: 22
+  #   conn_timeout / auth_timeout / banner_timeout: 15/20/20   (default: timeout_per_device)
+  #   read_timeout: 120        # seconds per LSDB command (large databases are slow)
+  #   commands:                # replace the built-in LSDB commands; "{pid}" = ospf_process_id
+  #     router:  show ip ospf database router detail
+  #     network: show ip ospf database network detail
+  #
+  # Netmiko device types:
   #   cisco_ios, cisco_xe    Cisco IOS / IOS-XE   (Genie)
   #   cisco_xr               Cisco IOS-XR         (Genie, default VRF)
   #   cisco_nxos             Cisco NX-OS          (Genie, default VRF)
@@ -26,19 +63,20 @@ device:
   #   arista_eos             Arista EOS           (text parser)
   #   vyos                   VyOS / FRR           (text parser)
   #   huawei, huawei_vrpv8   Huawei VRP           (text parser)
-  device_type: vyos
 
-  port: 22
-  conn_timeout: 15           # seconds to open the TCP connection
-  auth_timeout: 20           # seconds to authenticate
-  banner_timeout: 20         # seconds to wait for the SSH banner
-  read_timeout: 120          # seconds to wait for each LSDB command (large databases are slow)
-
-  # Optional: replace the built-in LSDB commands for this platform/version. "{pid}" is replaced by
-  # ospf_process_id. Needed e.g. if an Arista release only prints link details with "detail".
-  # commands:
-  #   router:  show ip ospf database router detail
-  #   network: show ip ospf database network detail
+# Legacy single-router form - still supported when there is no seeds.devices list (there the
+# OSPF_MONITOR_* variables win over this file, as before):
+# device:
+#   host: 10.255.255.6
+#   username: admin
+#   password: ""
+#   secret: ""
+#   device_type: vyos
+#   port: 22
+#   conn_timeout: 15
+#   auth_timeout: 20
+#   banner_timeout: 20
+#   read_timeout: 120
 
 # Process ID: int (e.g. 1) or VRF/instance tag (e.g. "default", "VRF1").
 # Omit for platforms that do not require a process ID.

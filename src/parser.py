@@ -18,6 +18,7 @@ import ipaddress
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,12 +30,14 @@ from src.vendors.base import (
     KIND_TRANSIT,
     KIND_VIRTUAL,
     Lsdb,
+    NetworkLsa,
     ParserError,
+    RouterLsa,
     SourceDetail,
     dotted_mask,
 )
 
-__all__ = ["BaseParser", "OSPFParser", "ParserError"]
+__all__ = ["BaseParser", "OSPFParser", "ParserError", "merge_lsdbs"]
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,94 @@ _EDGE_TYPE = {
     KIND_TRANSIT: "transit",
     KIND_VIRTUAL: "virtual-link",
 }
+
+
+#: An LSA at this age is being flushed from the domain (RFC 2328, MaxAge).
+MAX_LSA_AGE = 3600
+
+
+def _area_key(area: str) -> str:
+    """``"0"`` and ``"0.0.0.0"`` are the same area; some platforms print one form, some the other."""
+    text = str(area).strip()
+    if text.isdigit():
+        try:
+            return str(ipaddress.IPv4Address(int(text)))
+        except ValueError:
+            pass
+    return text
+
+
+def _is_newer(candidate: RouterLsa | NetworkLsa, current: RouterLsa | NetworkLsa) -> bool:
+    """True if ``candidate`` is a more recent instance of the same LSA than ``current``.
+
+    Follows RFC 2328 section 13.1 as far as this data allows: the higher (signed) sequence number wins.
+    The checksum is not part of the neutral model, so a tie falls to the age: a MaxAge copy (the LSA is
+    being withdrawn) beats a live one, otherwise the younger copy wins. Anything else is "not newer", so
+    the first seed listed keeps the LSA.
+    """
+    if candidate.seq != current.seq:
+        if candidate.seq is None:
+            return False
+        if current.seq is None:
+            return True
+        return candidate.seq > current.seq
+    if candidate.age is None or current.age is None or candidate.age == current.age:
+        return False
+    if MAX_LSA_AGE in (candidate.age, current.age):
+        return candidate.age == MAX_LSA_AGE
+    return candidate.age < current.age
+
+
+def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
+    """Combine the LSDBs read from several seed routers into one.
+
+    Every router sees its own area's Type 1/2 LSAs in full, so seeds in different areas each contribute
+    the part the others lack, while seeds in the same area return the same LSAs. An LSA is identified by
+    what originated it (router ID, or DR address and router ID) and the area it lives in; when several
+    seeds report the same one, the most recent instance is kept (see ``_is_newer``). Instances in different
+    areas are different LSAs and are all kept - an ABR legitimately has one router LSA per area. The links
+    of two copies are never unioned: that would resurrect links a newer instance has withdrawn.
+
+    The result shares its LSA objects with the inputs, which are not modified. ``router_id`` is only set
+    when there is a single input (a merged view has no single router).
+
+    Raises:
+        ParserError: If ``lsdbs`` is empty.
+    """
+    if not lsdbs:
+        raise ParserError("Nothing to merge: no LSDB was given")
+
+    routers: dict[tuple[str, str], RouterLsa] = {}
+    networks: dict[tuple[str, str, str], NetworkLsa] = {}
+    seen = 0
+    for lsdb in lsdbs:
+        for lsa in lsdb.router_lsas:
+            seen += 1
+            area = _area_key(lsa.area)
+            key = (lsa.router_id, area)
+            current = routers.get(key)
+            if current is None or _is_newer(lsa, current):
+                routers[key] = lsa if lsa.area == area else replace(lsa, area=area)
+        for lsa in lsdb.network_lsas:
+            seen += 1
+            area = _area_key(lsa.area)
+            key = (lsa.address, lsa.dr, area)
+            current = networks.get(key)
+            if current is None or _is_newer(lsa, current):
+                networks[key] = lsa if lsa.area == area else replace(lsa, area=area)
+
+    merged = Lsdb(
+        router_lsas=list(routers.values()),
+        network_lsas=list(networks.values()),
+        process_ids=sorted({pid for lsdb in lsdbs for pid in lsdb.process_ids}),
+        router_id=lsdbs[0].router_id if len(lsdbs) == 1 else None,
+    )
+    logger.info(
+        "Merged %d LSDB(s): %d router + %d network LSAs (%d duplicate(s) collapsed)",
+        len(lsdbs), len(merged.router_lsas), len(merged.network_lsas),
+        seen - len(merged.router_lsas) - len(merged.network_lsas),
+    )
+    return merged
 
 
 class BaseParser(ABC):

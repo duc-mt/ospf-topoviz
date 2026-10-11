@@ -17,20 +17,30 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from src import TrackerError, __version__
-from src.config import load_settings, parse_process_id, stale_lsa_age
+from src.config import SEED_MODES, load_settings, parse_process_id, parse_seed_hosts, stale_lsa_age
 from src.graph_engine import GraphEngine, GuardConfig, TopologyDiff
-from src.parser import DEFAULT_STALE_AGE, OSPFParser
-from src.poller import BasePoller, DevicePoller, FilePoller, RawLSDB
+from src.parser import DEFAULT_STALE_AGE, OSPFParser, merge_lsdbs
+from src.poller import (
+    FilePoller,
+    MultiDevicePoller,
+    PollerError,
+    PollResult,
+    RawLSDB,
+    SeedResult,
+)
 from src.vendors import supported_device_types
-from src.vendors.base import SourceDetail
+from src.vendors.base import Lsdb, SourceDetail
 from src.visualizer import TopologyVisualizer, VisualOptions
 from src.report import (
     render_diff_table,
     render_quality_table,
+    render_seed_table,
     render_summary_banner,
     render_topology_summary_table,
 )
@@ -47,7 +57,7 @@ logger = logging.getLogger("ospf_tracker")
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Track OSPF topology changes from the LSDB of a seed router."
+        description="Track OSPF topology changes from the LSDB of one or more seed routers."
     )
     ap.add_argument(
         "--config",
@@ -59,6 +69,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--device-type",
         metavar="TYPE",
         help=f"Netmiko device type, overrides the settings file ({', '.join(supported_device_types())})",
+    )
+    ap.add_argument(
+        "--mode",
+        choices=SEED_MODES,
+        help="multi-seed mode, overrides seeds.mode: 'merge' polls every seed and combines their LSDBs, "
+        "'fallback' uses the first seed (by priority) that answers",
+    )
+    ap.add_argument(
+        "--seeds",
+        metavar="HOST[,HOST...]",
+        help="poll only these seed routers, in this priority order (overrides the list in the settings file; "
+        "a host not listed there reuses the shared/legacy credentials)",
     )
     ap.add_argument(
         "--replay",
@@ -100,12 +122,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def print_summary(raw: RawLSDB, graph, diff: TopologyDiff) -> None:
-    """Print a human-readable change report to the console using modern tables."""
+def print_summary(raw: RawLSDB, graph, diff: TopologyDiff, seeds: list[SeedResult] | None = None) -> None:
+    """Print a human-readable change report to the console using modern tables.
+
+    ``raw`` only supplies the source and timestamp lines. ``seeds`` (live runs) adds the Seed Health table
+    at the top and the seeds count in the bottom banner; replays pass nothing and look as they always did.
+    """
     print()
     print("=" * 72)
     print(" OSPF Topology Summary")
     print("=" * 72)
+    if seeds:
+        print("\n Seed Routers:")
+        print(render_seed_table(seeds))
+        print()
     print(f" Source    : {raw.source}   ({raw.collected_at})")
     print(
         f" Topology  : {graph.number_of_nodes()} nodes, {graph.number_of_edges()} directed links"
@@ -155,7 +185,7 @@ def print_summary(raw: RawLSDB, graph, diff: TopologyDiff) -> None:
             print(diff_table)
 
     # 5. Bottom summary card
-    print("\n" + render_summary_banner(raw, graph, diff))
+    print("\n" + render_summary_banner(raw, graph, diff, seeds))
 
 
 def save_raw(raw: RawLSDB, directory: Path) -> None:
@@ -173,18 +203,106 @@ def save_raw(raw: RawLSDB, directory: Path) -> None:
     logger.info("Raw CLI output saved to %s", directory)
 
 
-def build_poller(args: argparse.Namespace, settings: dict) -> BasePoller:
+def save_raw_seeds(result: PollResult, directory: Path) -> None:
+    """``--save-raw`` for a poll result.
+
+    One configured seed keeps the flat layout (``DIR/router_lsdb.txt``), replayable as before. With several
+    seeds each gets its own folder, ``DIR/<host>/``, so every one can be replayed on its own
+    (``--replay DIR/<host> --device-type ...``). The layout depends on how many seeds are configured, not
+    on how many answered, so it does not change from one run to the next.
+    """
+    captured = [(s.host, s.raw) for s in result.seeds if s.raw is not None]
+    if len(result.seeds) == 1:
+        for _host, raw in captured:
+            save_raw(raw, directory)
+        return
+    for host, raw in captured:
+        save_raw(raw, directory / re.sub(r"[^A-Za-z0-9_.-]", "_", host))
+
+
+@dataclass
+class SeedIngest:
+    """What parsing one seed's raw output yields: its LSDB and (if it printed one) its neighbour table."""
+
+    lsdb: Lsdb
+    detail: SourceDetail | None = None
+
+
+class ParserPool:
+    """One ``OSPFParser`` per (platform, OSPF process), created once and shared by the seeds that need it."""
+
+    def __init__(self) -> None:
+        self._parsers: dict[tuple[str, str | None], OSPFParser] = {}
+
+    def get(self, device_type: str, process_id: str | None) -> OSPFParser:
+        key = (device_type, process_id)
+        if key not in self._parsers:
+            self._parsers[key] = OSPFParser(device_type=device_type, process_id=process_id)
+        return self._parsers[key]
+
+
+def make_ingest(parsers: ParserPool):
+    """Build the callback that parses one seed's raw output (run by ``MultiDevicePoller`` per seed).
+
+    A ``TrackerError`` from it - e.g. no router LSAs in the output - makes that seed count as failed, so in
+    fallback mode the next seed gets its turn.
+    """
+
+    def ingest(seed, raw: RawLSDB) -> SeedIngest:
+        parser = parsers.get(seed.device_type, seed.process_id)
+        lsdb = parser.parse_lsdb(raw.router, raw.network)
+        detail = None
+        if raw.neighbors.strip():
+            try:
+                neighbors = parser.parse_neighbors(raw.neighbors)
+            except TrackerError as exc:
+                logger.warning("%s: neighbour table ignored: %s", seed.host, exc)
+            else:
+                if neighbors is not None:
+                    detail = SourceDetail(seed.name, lsdb.router_id, neighbors)
+        return SeedIngest(lsdb, detail)
+
+    return ingest
+
+
+def build_poller(args: argparse.Namespace, settings: dict, ingest) -> MultiDevicePoller:
     """Pick the data source. Swap or extend here to add API polling or another vendor."""
     if args.replay:
+        if args.mode or args.seeds:
+            logger.warning("--mode and --seeds do nothing with --replay; ignored")
         device = (
             settings.get("device") if isinstance(settings.get("device"), dict) else {}
         )
-        return FilePoller(
+        replay = FilePoller(
             args.replay,
             device_type=args.device_type or device.get("device_type", "cisco_ios"),
             process_id=parse_process_id(settings.get("ospf_process_id")),
         )
-    return DevicePoller(args.config, device_type=args.device_type, settings=settings)
+        return MultiDevicePoller([replay], mode="fallback", concurrency=1, ingest=ingest)
+    return MultiDevicePoller.from_settings(
+        args.config,
+        settings=settings,
+        mode=args.mode,
+        hosts=parse_seed_hosts(args.seeds) or None,
+        device_type=args.device_type,
+        ingest=ingest,
+    )
+
+
+def combined_source(result: PollResult) -> RawLSDB:
+    """A ``RawLSDB`` that stands for the whole poll in the summary (it only supplies source and time).
+
+    One answering seed: that seed's own capture. Several: their hosts joined, stamped with the latest time.
+    """
+    answered = [s.raw for s in result.succeeded if s.raw is not None]
+    if len(answered) == 1:
+        return answered[0]
+    return RawLSDB(
+        router="",
+        network="",
+        source=", ".join(r.source for r in answered),
+        collected_at=max(r.collected_at for r in answered),
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -192,8 +310,10 @@ def run(args: argparse.Namespace) -> int:
     settings = load_settings(args.config, required=not args.replay)
 
     # Build every stage first so configuration/import problems surface before any SSH traffic.
-    poller = build_poller(args, settings)
-    parser = OSPFParser(device_type=poller.device_type, process_id=poller.process_id)
+    parsers = ParserPool()
+    poller = build_poller(args, settings, make_ingest(parsers))
+    for seed in poller.pollers:
+        parsers.get(seed.device_type, seed.process_id)  # e.g. Genie missing -> fail now, not after polling
     engine = GraphEngine(
         data_dir=DATA_DIR, guard=GuardConfig.from_settings(settings.get("guard"))
     )
@@ -203,33 +323,45 @@ def run(args: argparse.Namespace) -> int:
         options=VisualOptions.from_settings(settings.get("visualization")),
     )
 
-    raw = poller.poll()  # 1. Poll
+    result = poller.poll()  # 1. Poll (+ parse each seed's output)
     if args.save_raw:
-        save_raw(raw, args.save_raw)
-    lsdb = parser.parse_lsdb(raw.router, raw.network)
-    details = []
-    if raw.neighbors.strip():
-        try:
-            neighbors = parser.parse_neighbors(raw.neighbors)
-        except TrackerError as exc:
-            logger.warning("Neighbour table ignored: %s", exc)
-        else:
-            if neighbors is not None:
-                details.append(SourceDetail("seed", lsdb.router_id, neighbors))
+        save_raw_seeds(result, args.save_raw)
+    live = not args.replay
+    if not result.succeeded or (poller.require_all and poller.mode == "merge" and result.failed):
+        if live and len(result.seeds) > 1:  # which seeds failed is the useful part of the answer
+            print("\n Seed Routers:\n" + render_seed_table(result.seeds) + "\n")
+        if len(result.seeds) == 1:
+            raise PollerError(result.seeds[0].error or result.seeds[0].status)
+        reason = "No seed router could be polled" if not result.succeeded else "A seed failed and seeds.require_all is set"
+        raise PollerError(f"{reason}: {result.failure_report()}")
 
-    parsed = parser.build_topology(
-        lsdb,
-        {"device_type": poller.device_type},
-        details,
-        stale_age=stale_lsa_age(settings, DEFAULT_STALE_AGE),
-    )  # 2. Parse
+    answered = result.succeeded
+    for seed in answered:
+        ingested: SeedIngest = seed.parsed
+        seed.lsas = len(ingested.lsdb.router_lsas) + len(ingested.lsdb.network_lsas)
+        seed.neighbors = len(ingested.detail.neighbors) if ingested.detail else 0
+    lsdbs = [s.parsed.lsdb for s in answered]
+    lsdb = merge_lsdbs(lsdbs) if len(lsdbs) > 1 else lsdbs[0]
+    details = [s.parsed.detail for s in answered if s.parsed.detail is not None]
+
+    metadata = {"device_type": ", ".join(sorted({s.device_type for s in answered}))}
+    if live:
+        metadata["seed_mode"] = result.mode
+        metadata["sources"] = [
+            {"name": s.host, "status": "ok" if s.ok else ("skipped" if s.status == "SKIPPED" else "failed")}
+            for s in result.seeds
+        ]
+    parsed = build_parsed_topology(lsdb, metadata, details, settings)  # 2. Parse / merge
+    # In merge mode a seed that did not answer leaves a hole in the picture; in fallback mode it does not.
+    partial = [s.host for s in result.failed] if result.mode == "merge" else []
     graph, diff = engine.process(  # 3. Engine
         parsed,
         accept_changes=args.accept_changes,
         dry_run=args.dry_run,
+        partial_sources=partial,
     )
 
-    print_summary(raw, graph, diff)  # shown even if rendering fails below
+    print_summary(combined_source(result), graph, diff, result.seeds if live else None)  # shown even if rendering fails
     if args.dry_run:
         print("\n [DRY RUN] Topology diffed — no state files written.\n")
     image = visualizer.render(graph, diff)  # 4. Visualize
@@ -237,6 +369,16 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         return EXIT_OK
     return EXIT_SUSPECT if not diff.baseline_updated else EXIT_OK
+
+
+def build_parsed_topology(lsdb: Lsdb, metadata: dict, details: list[SourceDetail], settings: dict) -> dict:
+    """Flatten the (merged) LSDB plus every seed's neighbour table into the standard topology dict."""
+    return OSPFParser.build_topology(
+        lsdb,
+        metadata,
+        details,
+        stale_age=stale_lsa_age(settings, DEFAULT_STALE_AGE),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
