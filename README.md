@@ -70,11 +70,15 @@ pip install -r requirements.lock
 Try any of the bundled vendor samples:
 
 ```bash
+# Linux / macOS / WSL
+./run.sh --replay samples/vyos
+./run.sh --replay samples/cisco_ios
+
+# Windows (CMD / PowerShell)
+run.bat --replay samples\vyos
+
+# Or directly with Python
 python main.py --replay samples/vyos
-python main.py --replay samples/cisco_ios
-python main.py --replay samples/arista_eos
-python main.py --replay samples/juniper_junos
-python main.py --replay samples/huawei
 ```
 
 The topology diagram is written to `output/topology.png`.
@@ -84,7 +88,8 @@ The topology diagram is written to `output/topology.png`.
 Edit `config/settings.yaml` (or set environment variables) and run:
 
 ```bash
-python main.py
+./run.sh          # Linux / macOS / WSL
+run.bat           # Windows
 ```
 
 ---
