@@ -88,18 +88,23 @@ class OSPFParser(BaseParser):
         """Parse a neighbour table; ``None`` if this platform has no neighbour parser."""
         return self.adapter.parse_neighbors(raw_neighbors, self.process_id)
 
-    def parse(self, raw_router: str, raw_network: str = "") -> dict[str, Any]:
-        """Parse raw LSDB text into the standardized topology dictionary.
-
-        Raises:
-            ParserError: If the platform parser fails or the output holds no router LSAs.
-        """
+    def parse_lsdb(self, raw_router: str, raw_network: str = "") -> Lsdb:
+        """Parse raw router and network text into a neutral Lsdb model."""
         lsdb = self.adapter.parse(raw_router, raw_network, self.process_id)
         if not lsdb.router_lsas:
             hint = ""
             if self.process_id is not None:
                 hint = f" for OSPF process {self.process_id} (process IDs in output: {lsdb.process_ids or 'none'})"
             raise ParserError(f"No router (Type 1) LSAs found{hint}")
+        return lsdb
+
+    def parse(self, raw_router: str, raw_network: str = "") -> dict[str, Any]:
+        """Parse raw LSDB text into the standardized topology dictionary.
+
+        Raises:
+            ParserError: If the platform parser fails or the output holds no router LSAs.
+        """
+        lsdb = self.parse_lsdb(raw_router, raw_network)
         return self.build_topology(lsdb, {"device_type": self.device_type})
 
     @classmethod

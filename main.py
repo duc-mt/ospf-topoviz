@@ -28,6 +28,12 @@ from src.poller import BasePoller, DevicePoller, FilePoller, RawLSDB
 from src.vendors import supported_device_types
 from src.vendors.base import SourceDetail
 from src.visualizer import TopologyVisualizer, VisualOptions
+from src.report import (
+    render_diff_table,
+    render_quality_table,
+    render_summary_banner,
+    render_topology_summary_table,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = BASE_DIR / "config" / "settings.yaml"
@@ -95,18 +101,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def print_summary(raw: RawLSDB, graph, diff: TopologyDiff) -> None:
-    """Print a human-readable change report to the console."""
+    """Print a human-readable change report to the console using modern tables."""
     print()
-    print("=" * 64)
+    print("=" * 72)
     print(" OSPF Topology Summary")
-    print("=" * 64)
+    print("=" * 72)
     print(f" Source    : {raw.source}   ({raw.collected_at})")
     print(
         f" Topology  : {graph.number_of_nodes()} nodes, {graph.number_of_edges()} directed links"
     )
 
-    print_data_quality(graph)
+    abrs = [n for n, a in graph.nodes(data=True) if a.get("abr")]
+    asbrs = [n for n, a in graph.nodes(data=True) if a.get("asbr")]
+    if abrs or asbrs:
+        print(f" Roles     : {len(abrs)} ABR ({', '.join(abrs) or '-'}), {len(asbrs)} ASBR ({', '.join(asbrs) or '-'})")
 
+    # 1. Topology comparison summary table
+    print("\n" + render_topology_summary_table(graph, diff))
+
+    # 2. Quality / Adjacency issues table (if any)
+    quality_table = render_quality_table(graph)
+    if quality_table:
+        print("\n Data Quality & Adjacency Issues:")
+        print(quality_table)
+
+    # 3. Suspect warning banner
     if diff.suspect_reasons:
         verdict = (
             "baseline NOT updated"
@@ -122,65 +141,21 @@ def print_summary(raw: RawLSDB, graph, diff: TopologyDiff) -> None:
             )
             print("    --accept-changes if this change is real.")
 
+    # 4. Topology diff table
     if not diff.baseline_available:
         print(
             "\n First run (or no usable previous state): baseline saved, nothing to compare."
         )
-        return
-    if not diff.has_changes:
+    elif not diff.has_changes:
         print("\n No topology changes detected since the previous run.")
-        return
+    else:
+        diff_table = render_diff_table(diff)
+        if diff_table:
+            print("\n Detailed Topology Changes:")
+            print(diff_table)
 
-    def section(title: str, items: list, fmt) -> None:
-        if items:
-            print(f"\n {title} ({len(items)}):")
-            for item in items:
-                print(f"   {fmt(item)}")
-
-    link = lambda e: (
-        f"{e['source_label']} -> {e['target_label']}  [metric {e.get('metric', '?')}, {e.get('link_type', '?')}]"
-    )
-    section("+ Nodes added", diff.added_nodes, lambda n: f"{n['label']}  ({n['type']})")
-    section(
-        "- Nodes removed", diff.removed_nodes, lambda n: f"{n['label']}  ({n['type']})"
-    )
-    section("+ Links added", diff.added_edges, link)
-    section("- Links removed", diff.removed_edges, link)
-    section(
-        "~ Metrics changed",
-        diff.changed_metrics,
-        lambda e: (
-            f"{e['source_label']} -> {e['target_label']}  [{e['old_metric']} -> {e['new_metric']}]"
-        ),
-    )
-
-
-def print_data_quality(graph) -> None:
-    """Report what the LSDB itself says about how far it can be trusted (nothing is printed when all is well)."""
-    meta = graph.graph
-    stale = meta.get("stale_nodes") or []
-    one_way = meta.get("one_way_links") or 0
-    issues = meta.get("adjacency_issues") or []
-    abrs = [n for n, a in graph.nodes(data=True) if a.get("abr")]
-    asbrs = [n for n, a in graph.nodes(data=True) if a.get("asbr")]
-    if abrs or asbrs:
-        print(f" Roles     : {len(abrs)} ABR ({', '.join(abrs) or '-'}), {len(asbrs)} ASBR ({', '.join(asbrs) or '-'})")
-    if not (stale or one_way or issues):
-        return
-    print("\n Data quality - things the LSDB itself does not make obvious:")
-    for node in stale:
-        minutes = graph.nodes[node].get("lsa_age", 0) // 60
-        print(f"   STALE      {node}: its LSA is {minutes} min old and no longer being refreshed - "
-              "the router is probably gone")
-    if one_way:
-        print(f"   ONE-WAY    {one_way} link(s) are advertised by one end only; OSPF itself ignores such links")
-        for u, v, attrs in graph.edges(data=True):
-            if attrs.get("link_state") == "one-way":
-                print(f"              {u} -> {v}")
-    for issue in issues:
-        where = f" on {issue['interface']}" if issue.get("interface") else ""
-        known = "" if issue.get("in_lsdb") else "  (router not in the LSDB)"
-        print(f"   ADJACENCY  {issue['source']}: neighbour {issue['neighbor']} is {issue['state']}{where}{known}")
+    # 5. Bottom summary card
+    print("\n" + render_summary_banner(raw, graph, diff))
 
 
 def save_raw(raw: RawLSDB, directory: Path) -> None:
