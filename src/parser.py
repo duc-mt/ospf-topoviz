@@ -35,6 +35,7 @@ from src.vendors.base import (
     RouterLsa,
     SourceDetail,
     dotted_mask,
+    state_severity,
 )
 
 __all__ = ["BaseParser", "OSPFParser", "ParserError", "merge_lsdbs"]
@@ -179,6 +180,10 @@ class OSPFParser(BaseParser):
         """Parse a neighbour table; ``None`` if this platform has no neighbour parser."""
         return self.adapter.parse_neighbors(raw_neighbors, self.process_id)
 
+    def parse_routes(self, raw_routes: str):
+        """Parse an OSPF routing table into ``OSPFRoute`` records; ``None`` if this platform has no parser."""
+        return self.adapter.parse_routes(raw_routes, self.process_id)
+
     def parse_lsdb(self, raw_router: str, raw_network: str = "") -> Lsdb:
         """Parse raw router and network text into a neutral Lsdb model."""
         lsdb = self.adapter.parse(raw_router, raw_network, self.process_id)
@@ -236,6 +241,8 @@ class OSPFParser(BaseParser):
                 node["asbr"] = True
             cls._note_age(node, lsa.age)
             for link in lsa.links:
+                if link.kind == KIND_STUB:
+                    cls._note_stub(node, link, lsa.area)
                 cls._add_router_link(nodes, edges, lsa.router_id, link, lsa.area)
 
         # Type 2: transit networks (the DR originates one per segment).
@@ -278,6 +285,8 @@ class OSPFParser(BaseParser):
 
         for node in nodes.values():
             node["areas"] = sorted(node["areas"])
+            if "prefixes" in node:
+                node["prefixes"].sort(key=lambda e: (e["prefix"], e["area"]))
         meta = {
             "device_type": cls.__name__,
             "ospf_process_ids": lsdb.process_ids,
@@ -291,6 +300,9 @@ class OSPFParser(BaseParser):
             "unverified_links": unverified,
             "adjacency_issues": issues,
         }
+        snapshot = cls._neighbor_snapshot(details)
+        if snapshot:
+            meta["neighbors"] = snapshot
         meta.update(metadata or {})
         return {
             "metadata": meta,
@@ -359,6 +371,13 @@ class OSPFParser(BaseParser):
                         link = next(((router, seg) for seg in segments if (seg, nbr.router_id) in edges), None)
                     if link is not None:
                         edges[link].setdefault("interface", nbr.interface)
+                # Colour the link by its adjacency; on a shared segment the worst neighbour decides.
+                shared = (router, nbr.router_id) if (router, nbr.router_id) in edges else next(
+                    ((router, seg) for seg in segments if (seg, nbr.router_id) in edges), None)
+                if shared is not None:
+                    current = edges[shared].get("nbr_state")
+                    if current is None or state_severity(nbr.state) > state_severity(current):
+                        edges[shared]["nbr_state"] = nbr.state
                 if cls._is_adjacency_problem(nbr):
                     issues.append({
                         "router": router, "neighbor": nbr.router_id, "state": nbr.state, "role": nbr.role,
@@ -366,6 +385,33 @@ class OSPFParser(BaseParser):
                         "in_lsdb": nbr.router_id in nodes and nodes[nbr.router_id]["resolved"],
                     })
         return issues
+
+    @classmethod
+    def _note_stub(cls, node: dict, link, area: str) -> None:
+        """Remember a prefix a router advertises as a stub network (what its routing-table entry will be checked against)."""
+        prefix = cls._prefix(link.link_id, dotted_mask(link.link_data))
+        if prefix is None or link.metric is None:
+            return
+        entry = {"prefix": prefix, "metric": link.metric, "area": area}
+        stubs = node.setdefault("prefixes", [])
+        if entry not in stubs:
+            stubs.append(entry)
+
+    @staticmethod
+    def _neighbor_snapshot(details: Sequence[SourceDetail] | None) -> list[dict]:
+        """Every polled neighbour-table row as a plain dict, kept in the state file to spot flaps between runs."""
+        rows = []
+        for detail in details or ():
+            if not detail.router_id:
+                continue
+            for nbr in detail.neighbors:
+                rows.append({
+                    "router": detail.router_id, "neighbor": nbr.router_id, "state": nbr.state,
+                    "role": nbr.role, "interface": nbr.interface, "address": nbr.address,
+                    "priority": nbr.priority, "dead_time": nbr.dead_time, "source": detail.name,
+                })
+        rows.sort(key=lambda r: (node_sort_key(r["router"]), node_sort_key(r["neighbor"]), r["interface"] or ""))
+        return rows
 
     @classmethod
     def _add_router_link(cls, nodes, edges, router_id: str, link, area: str) -> None:

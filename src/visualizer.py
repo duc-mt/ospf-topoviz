@@ -35,6 +35,12 @@ COLOR_ADDED = "#27AE60"
 COLOR_REMOVED = "#E74C3C"
 COLOR_CHANGED = "#E67E22"
 COLOR_MUTED = "#95A5A6"
+# Adjacency state of a link (from the neighbour tables)
+COLOR_FULL = "#1E8449"  # Full
+COLOR_TWO_WAY = "#D4AC0D"  # 2-Way (normal between two DROthers on a broadcast segment)
+COLOR_STUCK = "#D35400"  # ExStart / Exchange / Loading: negotiating or stuck
+COLOR_DOWN = "#C0392B"  # Init / Down / Attempt
+COLOR_PATH = "#2471A3"  # the path drawn by --trace
 COLOR_WARN = "#8E44AD"  # data the LSDB itself casts doubt on: stale router, one-way link, stuck adjacency
 
 FILL_ROUTER = "#3498DB"
@@ -52,6 +58,14 @@ _IF_ABBREVIATIONS = (
     ("HundredGigE", "Hu"), ("TwentyFiveGigE", "Twe"), ("TenGigabitEthernet", "Te"), ("GigabitEthernet", "Gi"),
     ("FastEthernet", "Fa"), ("Port-channel", "Po"), ("Loopback", "Lo"), ("Ethernet", "Eth"), ("Vlan", "Vl"),
 )
+
+
+def adjacency_color(state: str | None) -> str | None:
+    """Link colour for a neighbour state (``None`` = no adjacency data for the link)."""
+    if state is None:
+        return None
+    return {"Full": COLOR_FULL, "2-Way": COLOR_TWO_WAY, "Loading": COLOR_STUCK, "Exchange": COLOR_STUCK,
+            "ExStart": COLOR_STUCK}.get(state, COLOR_DOWN)
 
 
 def short_interface(name: str) -> str:
@@ -181,8 +195,12 @@ class TopologyVisualizer:
             raise VisualizationError(f"Unknown Graphviz layout engine '{layout}'")
 
     # ---------------------------------------------------------------- building
-    def build_digraph(self, graph: nx.DiGraph, diff: TopologyDiff) -> graphviz.Graph:
+    def build_digraph(
+        self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None
+    ) -> graphviz.Graph:
         """Translate the graph and diff report into a Graphviz graph.
+
+        ``highlight`` is a set of node pairs (``frozenset({a, b})``) to draw as the traced path.
 
         (The name is historical: the result is undirected, one line per link.)
         """
@@ -225,12 +243,15 @@ class TopologyVisualizer:
                         color=COLOR_MUTED,
                     )
                     drawn.add(end)
-            dot.edge(link.a, link.b, **self._edge_attrs(link, scale))
+            attrs = self._edge_attrs(link, scale)
+            if highlight and frozenset((link.a, link.b)) in highlight:
+                attrs.update(color=COLOR_PATH, fontcolor=COLOR_PATH, penwidth="5", style="solid")
+            dot.edge(link.a, link.b, **attrs)
 
         for issue in graph.graph.get("adjacency_issues") or []:
             router, neighbour = issue["router"], issue["neighbor"]
-            if router not in drawn:
-                continue
+            if router not in drawn or self._state_drawn(graph, router, neighbour):
+                continue  # the link itself is coloured by its adjacency state; no extra dashed line needed
             if neighbour not in drawn:  # a router that is trying to join but is not in the LSDB (yet)
                 dot.node(
                     neighbour,
@@ -256,6 +277,24 @@ class TopologyVisualizer:
                 penwidth="1.6",
             )
         return dot
+
+    @staticmethod
+    def _state_drawn(graph: nx.DiGraph, router: str, neighbour: str) -> bool:
+        """True if the link between ``router`` and ``neighbour`` carries an adjacency state (so it is coloured)."""
+        if graph.has_edge(router, neighbour):
+            return "nbr_state" in graph.edges[router, neighbour]
+        return any("nbr_state" in attrs and graph.has_edge(seg, neighbour)
+                   for seg, attrs in ((s, graph.edges[router, s]) for s in graph.successors(router)
+                                      if graph.nodes[s].get("type") == "network"))
+
+    @staticmethod
+    def _link_adjacency(link: _Link) -> str | None:
+        """Worst adjacency state over both directions of a link."""
+        from src.vendors.base import state_severity
+
+        states = [s.attrs["nbr_state"] for s in (link.ab, link.ba)
+                  if s and s.status != "removed" and s.attrs.get("nbr_state")]
+        return max(states, key=state_severity) if states else None
 
     # ------------------------------------------------------------------- links
     def _collect_links(
@@ -379,6 +418,22 @@ class TopologyVisualizer:
             )
         elif status == "changed":
             attrs.update(color=COLOR_CHANGED, fontcolor=COLOR_CHANGED, penwidth="2.8")
+
+        state = self._link_adjacency(link)
+        one_way = attrs.get("style") == "dotted"
+        if state and status != "removed" and not one_way:
+            color = adjacency_color(state)
+            if state == "Full":
+                if status is None:  # an added/changed link keeps its change colour; Full says nothing is wrong
+                    attrs.update(color=color, fontcolor=color)
+            else:  # anything short of Full is worth seeing, whatever else changed
+                attrs.update(color=color, fontcolor=color, penwidth="3.2")
+                for key in ("label", "taillabel", "headlabel"):
+                    if key in attrs:
+                        attrs[key] += f"\\n{state}"
+                        break
+                else:
+                    attrs["label"] = state
         return attrs
 
     def _cost_scale(self, links: list[_Link]):
@@ -529,6 +584,13 @@ class TopologyVisualizer:
             lines.append(
                 "first run - no previous state to compare against" + purple + "   |   cost shown at each interface"
             )
+        if any(attrs.get("nbr_state") for _u, _v, attrs in graph.edges(data=True)):
+            lines.append("adjacency: green = Full   yellow = 2-Way   orange = ExStart/Exchange/Loading   red = Init/Down")
+        if getattr(diff, "findings", None):
+            counts = {}
+            for f in diff.findings:
+                counts[f["severity"]] = counts.get(f["severity"], 0) + 1
+            lines.append("CROSS-CHECK: " + ", ".join(f"{n} {sev}" for sev, n in counts.items()))
         sources = graph.graph.get("sources") or []
         if len(sources) > 1:
             ok = [s["name"] for s in sources if s.get("status") == "ok"]
@@ -559,8 +621,10 @@ class TopologyVisualizer:
         return "\\n".join(lines)
 
     # ---------------------------------------------------------------- rendering
-    def render(self, graph: nx.DiGraph, diff: TopologyDiff) -> Path:
+    def render(self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None) -> Path:
         """Render the diagram to ``output_path`` and return the path of the image.
+
+        ``highlight`` (node pairs) draws a traced path in blue; see ``correlation.trace_prefix``.
 
         On failure to run Graphviz, the DOT source is saved next to the target
         so it can be rendered later with ``dot -Tpng``.
@@ -568,7 +632,7 @@ class TopologyVisualizer:
         Raises:
             VisualizationError: If Graphviz is missing or fails.
         """
-        dot = self.build_digraph(graph, diff)
+        dot = self.build_digraph(graph, diff, highlight)
         out_dir = self.output_path.parent
         stem = self.output_path.stem
         try:

@@ -15,6 +15,7 @@ Notes:         Requires Python 3.8+
 from __future__ import annotations
 
 import ipaddress
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -26,6 +27,18 @@ KIND_P2P = "p2p"
 KIND_TRANSIT = "transit"
 KIND_STUB = "stub"
 KIND_VIRTUAL = "virtual"
+
+# OSPF route types as the neutral model spells them (``OSPFRoute.route_type``).
+ROUTE_INTRA = "Intra-Area"
+ROUTE_INTER = "Inter-Area"
+ROUTE_E1 = "E1"
+ROUTE_E2 = "E2"
+ROUTE_N1 = "N1"
+ROUTE_N2 = "N2"
+#: Platforms whose brief route output only distinguishes internal from external routes.
+ROUTE_INTERNAL = "Internal"  # intra- or inter-area: the output does not say which
+ROUTE_EXTERNAL = "External"  # E1/E2/N1/N2: the output does not say which
+INTERNAL_ROUTE_TYPES = (ROUTE_INTRA, ROUTE_INTER, ROUTE_INTERNAL)
 
 
 class ParserError(TrackerError):
@@ -41,6 +54,9 @@ class LinkRecord:
     ``link_data`` is the advertising router's own interface address on that link
     (the "Link Data" field; an ifIndex on unnumbered links). It is what lets the
     diagram label each link end with something a person can find on the box.
+
+    For a *stub* link the same two fields carry the advertised prefix: ``link_id`` is the network
+    address, ``link_data`` its mask and ``metric`` the cost to reach it from the advertising router.
     """
 
     kind: str
@@ -101,6 +117,64 @@ class NeighborRecord:
     interface: str | None = None  # the polled router's own interface towards the neighbour
     address: str | None = None  # the neighbour's interface address
     area: str | None = None
+    priority: int | None = None  # the neighbour's router priority (DR election)
+    dead_time: int | None = None  # seconds left before the neighbour is declared dead
+
+    # The same record under the names used in the monitoring model.
+    @property
+    def neighbor_id(self) -> str:
+        return self.router_id
+
+    @property
+    def ip_address(self) -> str | None:
+        return self.address
+
+    @property
+    def dr_bdr_role(self) -> str | None:
+        return self.role
+
+
+#: A neighbour-table row. (``NeighborRecord`` is the original name and stays the canonical class.)
+OSPFNeighbor = NeighborRecord
+
+
+@dataclass
+class NextHop:
+    """One next hop of a route: the gateway and the interface the router sends the traffic out of."""
+
+    ip: str | None = None  # ``None`` for a directly connected network
+    interface: str | None = None
+
+
+@dataclass
+class OSPFRoute:
+    """One OSPF route of the router's routing table (RIB)."""
+
+    prefix: str  # network address, e.g. "10.1.1.0"
+    mask: str  # dotted-quad, e.g. "255.255.255.0"
+    route_type: str  # ROUTE_INTRA | ROUTE_INTER | ROUTE_E1 | ... (or ROUTE_INTERNAL / ROUTE_EXTERNAL)
+    metric: int | None = None  # the route's cost
+    tag: int | None = None  # route tag, where the platform prints it
+    distance: int | None = None  # administrative distance / preference (110 for internal OSPF routes)
+    next_hops: list[NextHop] = field(default_factory=list)  # more than one = equal-cost multipath
+    process_id: str | None = None
+    #: False when the platform lists the OSPF route but another source won (FRR: no ``>``; Junos: no ``*``),
+    #: e.g. a static or BGP route with a lower distance. Platforms that only list installed routes are always True.
+    active: bool = True
+
+    @property
+    def prefix_length(self) -> int:
+        return ipaddress.IPv4Network(f"{self.prefix}/{self.mask}").prefixlen
+
+    @property
+    def cidr(self) -> str:
+        return f"{self.prefix}/{self.prefix_length}"
+
+    @classmethod
+    def from_cidr(cls, cidr: str, route_type: str, **fields) -> OSPFRoute:
+        """Build from ``10.1.1.0/24`` (host bits, if any, are cleared)."""
+        net = ipaddress.IPv4Network(cidr, strict=False)
+        return cls(prefix=str(net.network_address), mask=str(net.netmask), route_type=route_type, **fields)
 
 
 @dataclass
@@ -110,6 +184,10 @@ class SourceDetail:
     name: str
     router_id: str | None
     neighbors: list[NeighborRecord] = field(default_factory=list)
+    #: The router's OSPF routing table; ``None`` = not collected (or not supported on this platform).
+    routes: list[OSPFRoute] | None = None
+    #: False when no neighbour table was collected, so an empty ``neighbors`` list means "unknown", not "none".
+    neighbors_known: bool = True
 
 
 class LsdbAdapter(ABC):
@@ -117,6 +195,8 @@ class LsdbAdapter(ABC):
 
     #: True if ``process_id`` can be honored when parsing (header or schema carries it).
     filters_by_process: bool = False
+    #: Which routing-table layout ``parse_routes`` understands (see ``src.vendors.routes``); ``None`` = none.
+    route_format: str | None = None
 
     @abstractmethod
     def parse(self, raw_router: str, raw_network: str, process_id: str | None) -> Lsdb:
@@ -125,6 +205,14 @@ class LsdbAdapter(ABC):
     def parse_neighbors(self, raw: str, process_id: str | None) -> list[NeighborRecord] | None:
         """Parse the neighbour table; ``None`` means this platform has no neighbour parser."""
         return None
+
+    def parse_routes(self, raw: str, process_id: str | None) -> list[OSPFRoute] | None:
+        """Parse the OSPF routing table; ``None`` means this platform has no route parser."""
+        if self.route_format is None:
+            return None
+        from src.vendors.routes import parse_routes
+
+        return parse_routes(self.route_format, raw, process_id)
 
 
 # --------------------------------------------------------------------- helpers
@@ -201,3 +289,36 @@ def parse_seq(text) -> int | None:
     except ValueError:
         return None
 
+
+
+def parse_dead_time(text) -> int | None:
+    """Seconds from a dead-timer column: ``00:00:33``, ``33.5s``, ``37`` (Junos). ``None`` if unparseable."""
+    if text is None:
+        return None
+    value = str(text).strip()
+    if m := re.fullmatch(r"(\d+):(\d+):(\d+)(?:\.\d+)?", value):
+        h, mi, sec = (int(g) for g in m.groups())
+        return h * 3600 + mi * 60 + sec
+    if m := re.fullmatch(r"(\d+(?:\.\d+)?)s?", value):
+        return int(float(m.group(1)))
+    return None
+
+
+def role_from_dr(address: str | None, dr: str | None, bdr: str | None) -> str | None:
+    """A neighbour's role on a broadcast segment from the DR / BDR addresses a detail output prints."""
+    if not address or not dr or dr in ("0.0.0.0", "-"):
+        return None  # point-to-point (no election)
+    if address == dr:
+        return "DR"
+    if address == bdr:
+        return "BDR"
+    return "DROther"
+
+
+#: How bad each adjacency state is (higher = worse); anything unknown ranks with Down.
+_STATE_SEVERITY = {"Full": 0, "2-Way": 1, "Loading": 2, "Exchange": 3, "ExStart": 4, "Init": 5, "Attempt": 6, "Down": 7}
+
+
+def state_severity(state: str | None) -> int:
+    """Rank an adjacency state for "worst one wins" comparisons (Full < 2-Way < Loading < ... < Down)."""
+    return _STATE_SEVERITY.get(str(state), 7)

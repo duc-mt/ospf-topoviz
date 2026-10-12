@@ -78,6 +78,11 @@ seeds:
 #   banner_timeout: 20
 #   read_timeout: 120
 
+# What else to read from each router besides the LSDB (both are best effort)
+polling:
+  neighbors: true            # OSPF neighbour table: link colours, LSDB-vs-neighbour check, flap detection
+  routes: true               # OSPF routing table: SPF-vs-RIB check (blackholes, suboptimal routing), --trace
+
 # Process ID: int (e.g. 1) or VRF/instance tag (e.g. "default", "VRF1").
 # Omit for platforms that do not require a process ID.
 ospf_process_id: null

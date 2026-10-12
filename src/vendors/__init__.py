@@ -46,11 +46,13 @@ class VendorProfile:
     error_markers: tuple[str, ...]
     #: Neighbour-table command, or ``None`` if neighbour data is not collected on this platform.
     neighbors: CommandPair | None = None
+    #: OSPF routing-table (RIB) command, or ``None`` if the routing table is not collected on this platform.
+    routes: CommandPair | None = None
 
     def command(
         self, which: str, process_id: str | None, override: str | None = None
     ) -> str:
-        """Return the CLI command for ``which`` (``"router"``, ``"network"`` or ``"neighbors"``).
+        """Return the CLI command for ``which`` (``"router"``, ``"network"``, ``"neighbors"`` or ``"routes"``).
 
         ``override`` is the user's ``device.commands.<which>`` setting; it may contain
         ``{pid}``, which is replaced by the process ID.
@@ -63,7 +65,7 @@ class VendorProfile:
                     f"device.commands.{which} uses {{pid}} but ospf_process_id is not set"
                 )
             return override.replace("{pid}", process_id)
-        pair = {"router": self.router, "network": self.network, "neighbors": self.neighbors}[which]
+        pair = {"router": self.router, "network": self.network, "neighbors": self.neighbors, "routes": self.routes}[which]
         if pair is None:
             raise ConfigError(f"{self.key}: no '{which}' command is defined for this platform")
         if process_id is not None and pair.with_pid:
@@ -73,12 +75,16 @@ class VendorProfile:
 
 # ------------------------------------------------------------------ factories
 def _genie_cisco(
-    module: str, router_cls: str, network_cls: str, neighbor: tuple[str, str] | None = None
+    module: str,
+    router_cls: str,
+    network_cls: str,
+    neighbor: tuple[str, str] | None = None,
+    route_format: str | None = None,
 ) -> Callable[[], LsdbAdapter]:
     def factory() -> LsdbAdapter:
         from src.vendors.genie_cisco import GenieCiscoAdapter
 
-        return GenieCiscoAdapter(module, router_cls, network_cls, neighbor)
+        return GenieCiscoAdapter(module, router_cls, network_cls, neighbor, route_format)
 
     return factory
 
@@ -97,13 +103,14 @@ def _arista() -> LsdbAdapter:
         metric_hint="Use the detailed form via device.commands in settings.yaml, "
         "e.g. 'show ip ospf database router detail'.",
         neighbor_format="arista",
+        route_format="eos",
     )
 
 
 def _frr() -> LsdbAdapter:
     from src.vendors.cisco_style import CiscoStyleTextAdapter
 
-    return CiscoStyleTextAdapter("VyOS/FRR", neighbor_format="frr")
+    return CiscoStyleTextAdapter("VyOS/FRR", neighbor_format="frr", route_format="frr")
 
 
 def _huawei() -> LsdbAdapter:
@@ -125,6 +132,7 @@ _IOS_ERRORS = (
 _IOSXE = "genie.libs.parser.iosxe.show_ospf_database"
 _IOSXE_NBR = ("genie.libs.parser.iosxe.show_ospf", "ShowIpOspfNeighbor")
 _IOSXR_NBR = ("genie.libs.parser.iosxr.show_ospf", "ShowOspfNeighbor")
+_NXOS_NBR = ("genie.libs.parser.nxos.show_ospf", "ShowIpOspfNeighborDetail")
 _IOSXR = "genie.libs.parser.iosxr.show_ospf"
 _NXOS = "genie.libs.parser.nxos.show_ospf"
 
@@ -148,10 +156,11 @@ register(
             "show ip ospf database network", "show ip ospf {pid} database network"
         ),
         adapter_factory=_genie_cisco(
-            _IOSXE, "ShowIpOspfDatabaseRouter", "ShowIpOspfDatabaseNetwork", _IOSXE_NBR
+            _IOSXE, "ShowIpOspfDatabaseRouter", "ShowIpOspfDatabaseNetwork", _IOSXE_NBR, "ios"
         ),
         error_markers=_IOS_ERRORS,
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
+        routes=CommandPair("show ip route ospf", "show ip route ospf {pid}"),
     ),
     "cisco_ios",
     "cisco_xe",
@@ -185,9 +194,11 @@ register(
             "show ip ospf {pid} database network detail",
         ),
         adapter_factory=_genie_cisco(
-            _NXOS, "ShowIpOspfDatabaseRouterDetail", "ShowIpOspfDatabaseNetworkDetail"
+            _NXOS, "ShowIpOspfDatabaseRouterDetail", "ShowIpOspfDatabaseNetworkDetail", _NXOS_NBR, "nxos"
         ),
         error_markers=_IOS_ERRORS,
+        neighbors=CommandPair("show ip ospf neighbors detail", "show ip ospf {pid} neighbors detail"),
+        routes=CommandPair("show ip route ospf"),
     )
 )
 register(
@@ -198,7 +209,8 @@ register(
         network=CommandPair("show ospf database network extensive"),
         adapter_factory=_genie_junos,
         error_markers=("syntax error", "unknown command", "error:"),
-        neighbors=CommandPair("show ospf neighbor"),
+        neighbors=CommandPair("show ospf neighbor detail"),
+        routes=CommandPair("show route protocol ospf"),
     )
 )
 register(
@@ -218,6 +230,7 @@ register(
             "% Ambiguous command",
         ),
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
+        routes=CommandPair("show ip route ospf"),
     )
 )
 register(
@@ -235,6 +248,7 @@ register(
             "% Command incomplete",
         ),
         neighbors=CommandPair("show ip ospf neighbor"),
+        routes=CommandPair("show ip route ospf"),
     )
 )
 register(

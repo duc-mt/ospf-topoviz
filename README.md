@@ -12,6 +12,7 @@ python main.py --replay samples/vyos
 
 - **Multi-vendor** — Cisco IOS/IOS-XE/IOS-XR/NX-OS, Juniper JunOS, Arista EOS, VyOS/FRR, Huawei VRP
 - **Live polling** over SSH (Netmiko) or **offline replay** from saved CLI output
+- **End-to-end visibility** — besides the LSDB, each router's **OSPF neighbour table** and **OSPF routing table (RIB)** are read and cross-checked: LSDB adjacencies vs real neighbour state, neighbour flaps between runs, and an SPF recomputed from the LSDB vs the actual routes (blackholes, suboptimal paths, lost ECMP, routes overridden by static/BGP)
 - **Multi-seed polling** — `fallback` uses the first seed that answers (high availability); `merge` polls several seeds in parallel and combines their LSDBs and neighbour tables into one view, across areas
 - **Change detection** — added/removed nodes, added/removed links, metric changes
 - **Partial-LSDB guard** — detects when the seed router has lost an adjacency (or a merge seed did not answer) and refuses to overwrite a good baseline with a degraded view
@@ -119,6 +120,10 @@ seeds:
       # also per device: name, secret, port, conn_timeout, auth_timeout, banner_timeout,
       #                  read_timeout (large LSDBs can be slow), commands
 
+polling:
+  neighbors: true          # also read each router's OSPF neighbour table
+  routes: true             # also read each router's OSPF routing table (for the SPF-vs-RIB check)
+
 ospf_process_id: 1         # omit for platforms without process IDs (JunOS, VyOS)
 
 guard:
@@ -155,6 +160,35 @@ visualization:             # every key optional; these are the defaults
 
 **Existing configs keep working.** Without `seeds.devices` the single `device:` block is polled exactly as before.
 
+### End-to-end visibility: neighbours and routing table
+
+Next to the LSDB each polled router is asked for its OSPF neighbour table and its OSPF routing table. Both are best effort: a command that fails or is not available on a platform costs nothing but a log warning, and `polling.neighbors: false` / `polling.routes: false` switch them off.
+
+| Platform | Neighbour table | Routing table |
+|---|---|---|
+| Cisco IOS / IOS-XE | `show ip ospf neighbor` | `show ip route ospf` |
+| Cisco NX-OS | `show ip ospf neighbors detail` | `show ip route ospf` |
+| Arista EOS | `show ip ospf neighbor` | `show ip route ospf` |
+| Juniper Junos | `show ospf neighbor detail` | `show route protocol ospf` |
+| VyOS / FRR | `show ip ospf neighbor` | `show ip route ospf` |
+| Cisco IOS-XR, Huawei VRP | neighbour table only | not collected |
+
+Each neighbour has an ID, local interface, peer address, state, priority, dead time and DR/BDR role; each route a prefix and mask, type (`Intra-Area`, `Inter-Area`, `E1`, `E2`, `N1`, `N2`), cost, tag (where the platform prints one), distance and next hops (gateway + outgoing interface; several = ECMP). Junos' brief output cannot tell intra- from inter-area or E1 from E2, so those routes are typed `Internal` / `External`.
+
+**What is cross-checked** (`src/correlation.py`):
+
+| Check | Reported when |
+|---|---|
+| LSDB vs neighbour table | the LSDB still advertises an adjacency but the router's own table shows the neighbour stuck (`Init`, `ExStart`, ...) or absent, or shows a Full neighbour the LSDB has no link for. On a shared segment only adjacencies with the DR must be Full — `2-Way` between two DROthers is normal |
+| Neighbour flaps | a neighbour's state changed, was lost or is new compared with the last accepted run (only routers polled in both runs are compared) |
+| SPF vs RIB | Dijkstra over the LSDB (equal-cost paths kept) predicts every intra-area prefix's cost and first hops; the routing table is held against it: **blackhole** (prefix missing, or routed via a non-Full neighbour), **suboptimal** (wrong cost, next hop off the shortest path, ECMP path missing), **overridden** (OSPF route listed but not active — FRR and Junos show these), **stale** (intra-area route no LSA advertises) |
+
+What it cannot do, and why: only Type 1/2 LSAs are read, so inter-area and external routes cannot be recomputed and are counted as *unverified*, not judged; prefixes in areas the router is not in are not expected in its RIB (summarisation and filtering at the ABR are legitimate). The RIB command only lists OSPF routes, so on Cisco/Arista a prefix that is simply missing may have been beaten by a lower-distance static/BGP route, filtered by a `distribute-list`, or not installed — the report names these as possible causes (`show ip route <prefix>` tells which). A neighbour flap that happens and recovers *between* two runs is not seen.
+
+**Prefix path lookup.** `--trace 10.1.1.5` (an address, longest-prefix match, or a prefix) shows how a router reaches it: its routing-table entry, who advertises the prefix in the LSDB, and the LSDB shortest path hop by hop with interface and cost. The path is drawn in blue on the diagram, and the verdict says whether the RIB and the LSDB agree. `--trace-from ROUTER_ID` picks another router (LSDB side only unless it was polled).
+
+**Alerting.** Findings do not change the exit code by default. `--fail-on-findings` makes a run with a critical finding exit with `4` (a suspect run still exits `3`). Counts are added to the bottom banner and to `data/changelog.jsonl`.
+
 ### Supported device types
 
 | `device_type` | Platform |
@@ -179,6 +213,8 @@ visualization:             # every key optional; these are the defaults
 | Line thickness | Cost: cheaper links are thicker, so preferred paths stand out |
 | Dashed cluster | OSPF area (drawn only when the database holds several); area border routers sit outside the boxes |
 | Green / red dashed / orange | New / removed (kept in the drawing for this run) / metric changed (`old→new`) |
+| Link colour by adjacency | From the polled routers' neighbour tables: dark green = Full, yellow = 2-Way, orange = ExStart/Exchange/Loading, red = Init/Down (the state is also written on the link). A non-Full state wins over the new/changed colour; Full does not |
+| Thick blue path | The path of `--trace` |
 | Title | Counts of routers, transit networks and links; a warning if the topology is split into disconnected parts |
 
 OSPF does not carry interface names or speeds, so the interface address (the "Link Data" field; an ifIndex on unnumbered links) is the identifier shown.
@@ -209,6 +245,10 @@ Options:
   --seeds HOST[,HOST...]
                         Poll only these seed routers, in this priority order. A host not in the
                         settings file reuses the shared / legacy credentials and device type
+  --trace IP|PREFIX     Show how a router reaches this address/prefix (RIB entry + LSDB path); drawn in blue
+  --trace-from ROUTER_ID
+                        Router to trace from (default: the first polled router that has a routing table)
+  --fail-on-findings    Exit with code 4 when the cross-checks report a critical finding
   --replay DIR          Parse saved CLI output instead of connecting via SSH
   --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
   --output PATH         Diagram output path; extension sets format (png, svg, pdf, ...) (default: output/topology.png)
@@ -227,6 +267,7 @@ Options:
 | `1` | Expected failure (config error, SSH failure, parse error, …) |
 | `2` | Unexpected error |
 | `3` | Run flagged as a possible partial LSDB — baseline kept; use `--accept-changes` to override |
+| `4` | `--fail-on-findings` and the neighbour / routing-table cross-checks found a critical problem |
 
 ---
 
@@ -267,6 +308,7 @@ Run against a live device and save the raw CLI output for future offline use:
 python main.py --save-raw samples/my_router
 # → writes samples/my_router/router_lsdb.txt
 # → writes samples/my_router/network_lsdb.txt
+# → writes samples/my_router/neighbors.txt and routes.txt when the router answered those commands
 
 # Replay it later (no SSH required):
 python main.py --replay samples/my_router --device-type cisco_ios
@@ -321,6 +363,48 @@ The rest of a run looks like this (`--replay` runs have no seed table and keep t
   ✖ Suspect Run  │  Diffs: 58  │  Nodes: 4  │  Links: 6
 ```
 
+With neighbour and routing-table data the run adds the cross-check tables (shown here for a router whose neighbour is stuck in ExStart and whose route to `10.0.0.3/32` has the wrong cost, traced with `--trace 10.0.0.3`):
+
+```text
+ Neighbor Flap / State Mismatch:
+╭────────────┬──────────┬──────────┬────────────────┬────────────────────────────────────────────────────────────────────╮
+│ SEVERITY   │ ROUTER   │ NEIGHBOR │ KIND           │ DETAIL                                                             │
+├────────────┼──────────┼──────────┼────────────────┼────────────────────────────────────────────────────────────────────┤
+│ ✖ CRITICAL │ 10.0.0.1 │ 10.0.0.2 │ STATE MISMATCH │ LSDB has 10.0.0.1 -> 10.0.0.2 but the neighbour is ExStart on eth1 │
+╰────────────┴──────────┴──────────┴────────────────┴────────────────────────────────────────────────────────────────────╯
+  • stuck negotiating master/slave: typically an MTU mismatch or a duplicate router ID
+
+ Routing Blackhole / Suboptimal Routing:
+╭────────────┬──────────┬─────────────┬────────────┬───────────────────────────────────────────────────────────────────────╮
+│ SEVERITY   │ ROUTER   │ PREFIX      │ KIND       │ DETAIL                                                                │
+├────────────┼──────────┼─────────────┼────────────┼───────────────────────────────────────────────────────────────────────┤
+│ ✖ CRITICAL │ 10.0.0.1 │ 10.0.0.2/32 │ BLACKHOLE  │ 10.0.0.2/32 points at 10.0.0.2 (ExStart), whose adjacency is not Full │
+│ ⚠ WARNING  │ 10.0.0.1 │ 10.0.0.3/32 │ SUBOPTIMAL │ 10.0.0.3/32: routing table cost 9, SPF over the LSDB gives 2          │
+╰────────────┴──────────┴─────────────┴────────────┴───────────────────────────────────────────────────────────────────────╯
+  • traffic to this prefix is blackholed until the adjacency recovers
+  • the RIB is not following the shortest path (stale route, changed metric not yet flooded, or SPF running late)
+
+ Prefix Path Trace:
+ Query     : 10.0.0.3   from router 10.0.0.1
+ Prefix    : 10.0.0.3/32
+ RIB       : Intra-Area, cost 9 -> 192.168.1.3 via eth0 (10.0.0.3)
+ Origin    : 10.0.0.3 (stub, area 0.0.0.0)
+ SPF cost  : 2
+ Verdict   : ⚠ RIB cost differs from SPF
+
+ Path 1 of 1:
+╭─────┬────────────────────┬──────────────────────┬──────┬───────╮
+│ HOP │ NODE               │ LINK (OUT INTERFACE) │ COST │ TOTAL │
+├─────┼────────────────────┼──────────────────────┼──────┼───────┤
+│   0 │ 10.0.0.1           │ -                    │    - │     0 │
+│   1 │ net 192.168.1.0/24 │ eth0                 │    1 │     1 │
+│   2 │ 10.0.0.3           │ -                    │    0 │     1 │
+│   3 │ 10.0.0.3/32        │ stub                 │    1 │     2 │
+╰─────┴────────────────────┴──────────────────────┴──────┴───────╯
+
+  ✔ Stable Topology  │  Diffs: 0  │  Nodes: 4  │  Links: 6  │  Findings: 2 critical, 1 warning
+```
+
 ---
 
 ## Running Tests
@@ -347,10 +431,12 @@ ospf-topoviz/
 │   ├── poller.py             # SSH (DevicePoller), file (FilePoller) and multi-seed (MultiDevicePoller) sources
 │   ├── parser.py             # Dispatches to the right vendor adapter; merge_lsdbs() combines seeds
 │   ├── graph_engine.py       # NetworkX graph, diff, guard, state persistence
+│   ├── correlation.py        # SPF, LSDB-vs-neighbour, SPF-vs-RIB checks, neighbour flaps, prefix trace
 │   ├── report.py             # Modern box-drawing result table renderer
 │   ├── visualizer.py         # Graphviz rendering
 │   └── vendors/              # Per-platform LSDB parsers
-│       ├── base.py           # VendorProfile base class
+│       ├── base.py           # Neutral data model (LSAs, OSPFNeighbor, OSPFRoute) and adapter interface
+│       ├── routes.py         # Routing-table (RIB) parsers: IOS/EOS/FRR, NX-OS, Junos
 │       ├── cisco_style.py    # Cisco IOS/XE/XR/NX-OS + Arista (text)
 │       ├── genie_cisco.py    # Cisco via pyATS/Genie
 │       ├── genie_junos.py    # Juniper via pyATS/Genie

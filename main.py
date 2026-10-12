@@ -16,6 +16,7 @@ Notes:         Requires Python 3.8+
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import re
 import sys
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src import TrackerError, __version__
+from src.correlation import trace_prefix
 from src.config import SEED_MODES, load_settings, parse_process_id, parse_seed_hosts, stale_lsa_age
 from src.graph_engine import GraphEngine, GuardConfig, TopologyDiff
 from src.parser import DEFAULT_STALE_AGE, OSPFParser, merge_lsdbs
@@ -39,10 +41,14 @@ from src.vendors.base import Lsdb, SourceDetail
 from src.visualizer import TopologyVisualizer, VisualOptions
 from src.report import (
     render_diff_table,
+    render_neighbor_findings_table,
     render_quality_table,
+    render_rib_check_table,
+    render_route_findings_table,
     render_seed_table,
     render_summary_banner,
     render_topology_summary_table,
+    render_trace,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -50,7 +56,7 @@ DEFAULT_CONFIG = BASE_DIR / "config" / "settings.yaml"
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_IMAGE = BASE_DIR / "output" / "topology.png"
 
-EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_SUSPECT = 0, 1, 2, 3
+EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_SUSPECT, EXIT_FINDINGS = 0, 1, 2, 3, 4
 
 logger = logging.getLogger("ospf_tracker")
 
@@ -81,6 +87,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="HOST[,HOST...]",
         help="poll only these seed routers, in this priority order (overrides the list in the settings file; "
         "a host not listed there reuses the shared/legacy credentials)",
+    )
+    ap.add_argument(
+        "--trace",
+        metavar="IP|PREFIX",
+        help="after the run, show how a router reaches this address or prefix: its routing-table entry, then the "
+        "LSDB shortest path hop by hop (also drawn in blue on the diagram)",
+    )
+    ap.add_argument(
+        "--trace-from",
+        metavar="ROUTER_ID",
+        help="router ID to trace from (default: the first polled router that has a routing table)",
+    )
+    ap.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help="exit with code 4 when the neighbour / routing-table cross-checks report a critical finding",
     )
     ap.add_argument(
         "--replay",
@@ -122,11 +144,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def print_summary(raw: RawLSDB, graph, diff: TopologyDiff, seeds: list[SeedResult] | None = None) -> None:
+def print_summary(
+    raw: RawLSDB, graph, diff: TopologyDiff, seeds: list[SeedResult] | None = None, trace=None
+) -> None:
     """Print a human-readable change report to the console using modern tables.
 
     ``raw`` only supplies the source and timestamp lines. ``seeds`` (live runs) adds the Seed Health table
     at the top and the seeds count in the bottom banner; replays pass nothing and look as they always did.
+    ``trace`` (a ``correlation.TraceResult``) adds the prefix path lookup above the banner.
     """
     print()
     print("=" * 72)
@@ -150,7 +175,8 @@ def print_summary(raw: RawLSDB, graph, diff: TopologyDiff, seeds: list[SeedResul
     print("\n" + render_topology_summary_table(graph, diff))
 
     # 2. Quality / Adjacency issues table (if any)
-    quality_table = render_quality_table(graph)
+    covered = {(f["router"], f["subject"]) for f in diff.findings if f["kind"] == "ADJ_NOT_FULL"}
+    quality_table = render_quality_table(graph, covered)
     if quality_table:
         print("\n Data Quality & Adjacency Issues:")
         print(quality_table)
@@ -184,7 +210,22 @@ def print_summary(raw: RawLSDB, graph, diff: TopologyDiff, seeds: list[SeedResul
             print("\n Detailed Topology Changes:")
             print(diff_table)
 
-    # 5. Bottom summary card
+    # 5. Cross-checks: neighbour tables and routing tables against the LSDB
+    for title, table in (
+        ("OSPF Routing Table Check (SPF over the LSDB vs the router's own RIB):", render_rib_check_table(diff)),
+        ("Neighbor Flap / State Mismatch:", render_neighbor_findings_table(diff)),
+        ("Routing Blackhole / Suboptimal Routing:", render_route_findings_table(diff)),
+    ):
+        if table:
+            print(f"\n {title}")
+            print(table)
+
+    # 6. Prefix path lookup (--trace)
+    if trace is not None:
+        print("\n Prefix Path Trace:")
+        print(render_trace(trace, graph))
+
+    # 7. Bottom summary card
     print("\n" + render_summary_banner(raw, graph, diff, seeds))
 
 
@@ -196,6 +237,8 @@ def save_raw(raw: RawLSDB, directory: Path) -> None:
         (directory / FilePoller.NETWORK_FILE).write_text(raw.network, encoding="utf-8")
         if raw.neighbors:
             (directory / FilePoller.NEIGHBORS_FILE).write_text(raw.neighbors, encoding="utf-8")
+        if raw.routes:
+            (directory / FilePoller.ROUTES_FILE).write_text(raw.routes, encoding="utf-8")
     except OSError as exc:
         raise TrackerError(
             f"Could not write raw capture to {directory}: {exc}"
@@ -251,15 +294,21 @@ def make_ingest(parsers: ParserPool):
     def ingest(seed, raw: RawLSDB) -> SeedIngest:
         parser = parsers.get(seed.device_type, seed.process_id)
         lsdb = parser.parse_lsdb(raw.router, raw.network)
-        detail = None
+        neighbors = routes = None
         if raw.neighbors.strip():
             try:
                 neighbors = parser.parse_neighbors(raw.neighbors)
             except TrackerError as exc:
                 logger.warning("%s: neighbour table ignored: %s", seed.host, exc)
-            else:
-                if neighbors is not None:
-                    detail = SourceDetail(seed.name, lsdb.router_id, neighbors)
+        if raw.routes.strip():
+            try:
+                routes = parser.parse_routes(raw.routes)
+            except TrackerError as exc:
+                logger.warning("%s: routing table ignored: %s", seed.host, exc)
+        detail = None
+        if neighbors is not None or routes is not None:
+            detail = SourceDetail(seed.name, lsdb.router_id, neighbors or [], routes,
+                                  neighbors_known=neighbors is not None)
         return SeedIngest(lsdb, detail)
 
     return ingest
@@ -307,6 +356,11 @@ def combined_source(result: PollResult) -> RawLSDB:
 
 def run(args: argparse.Namespace) -> int:
     """Execute the full pipeline once."""
+    if args.trace:
+        try:  # fail before any SSH traffic
+            ipaddress.ip_network(args.trace, strict=False) if "/" in args.trace else ipaddress.ip_address(args.trace)
+        except ValueError as exc:
+            raise TrackerError(f"--trace expects an IP address or a prefix, got {args.trace!r}") from exc
     settings = load_settings(args.config, required=not args.replay)
 
     # Build every stage first so configuration/import problems surface before any SSH traffic.
@@ -359,16 +413,27 @@ def run(args: argparse.Namespace) -> int:
         accept_changes=args.accept_changes,
         dry_run=args.dry_run,
         partial_sources=partial,
+        details=details,
     )
 
-    print_summary(combined_source(result), graph, diff, result.seeds if live else None)  # shown even if rendering fails
+    trace = None
+    if args.trace:
+        try:
+            trace = trace_prefix(graph, details, args.trace, args.trace_from)
+        except ValueError as exc:
+            raise TrackerError(str(exc)) from exc
+
+    print_summary(combined_source(result), graph, diff, result.seeds if live else None, trace)  # shown even if rendering fails
     if args.dry_run:
         print("\n [DRY RUN] Topology diffed — no state files written.\n")
-    image = visualizer.render(graph, diff)  # 4. Visualize
+    # 4. Visualize
+    image = visualizer.render(graph, diff, highlight=trace.edges) if trace else visualizer.render(graph, diff)
     print(f"\n Diagram   : {image}\n")
     if args.dry_run:
-        return EXIT_OK
-    return EXIT_SUSPECT if not diff.baseline_updated else EXIT_OK
+        return EXIT_FINDINGS if args.fail_on_findings and diff.critical_findings else EXIT_OK
+    if not diff.baseline_updated:
+        return EXIT_SUSPECT
+    return EXIT_FINDINGS if args.fail_on_findings and diff.critical_findings else EXIT_OK
 
 
 def build_parsed_topology(lsdb: Lsdb, metadata: dict, details: list[SourceDetail], settings: dict) -> dict:

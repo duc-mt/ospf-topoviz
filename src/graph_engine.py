@@ -26,6 +26,8 @@ from typing import Any
 import networkx as nx
 
 from src import TrackerError, node_sort_key
+from src.correlation import CRITICAL, correlate
+from src.vendors.base import SourceDetail
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,11 @@ class TopologyDiff:
     suspect_reasons: list[str] = field(default_factory=list)
     #: False when the guard kept the previous baseline instead of saving this run.
     baseline_updated: bool = True
+    #: Cross-check results (``correlation.Finding.to_dict()``): LSDB vs neighbour state, neighbour flaps,
+    #: SPF vs routing table. Empty when no neighbour/routing data was collected.
+    findings: list[dict] = field(default_factory=list)
+    #: Per polled router: how many routing-table entries were seen, checked and found consistent.
+    rib_checks: list[dict] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -101,6 +108,10 @@ class TopologyDiff:
                 self.changed_metrics,
             )
         )
+
+    @property
+    def critical_findings(self) -> list[dict]:
+        return [f for f in self.findings if f.get("severity") == CRITICAL]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -344,6 +355,7 @@ class GraphEngine:
         accept_changes: bool = False,
         dry_run: bool = False,
         partial_sources: Sequence[str] = (),
+        details: Sequence[SourceDetail] = (),
     ) -> tuple[nx.DiGraph, TopologyDiff]:
         """Build the graph, diff it against the baseline and (if trustworthy) save it.
 
@@ -352,6 +364,8 @@ class GraphEngine:
             accept_changes: Commit this run as the new baseline even if the guard flagged it.
             dry_run: Build and diff without writing any state files.
             partial_sources: Seed routers that failed to answer; see ``assess``.
+            details: What each polled router reported besides the LSDB (neighbour table, routing table);
+                cross-checked against the topology into ``diff.findings`` (see ``correlation``).
 
         Returns:
             ``(graph, diff)``. ``diff.suspect_reasons`` / ``diff.baseline_updated`` tell
@@ -365,6 +379,10 @@ class GraphEngine:
             )  # crash recovery / first run after rotation
         diff = self.compare(baseline, graph)
         diff.suspect_reasons = self.assess(baseline, graph, partial_sources)
+        if details:
+            report = correlate(graph, details, baseline)
+            diff.findings = [f.to_dict() for f in report.findings]
+            diff.rib_checks = report.rib_checks
 
         if dry_run:
             diff.baseline_updated = False
@@ -410,6 +428,9 @@ class GraphEngine:
                            ("adjacency_issues", len(graph.graph.get("adjacency_issues") or []))):
             if key in graph.graph:
                 entry[key] = count
+        if diff.findings:
+            entry["findings"] = {sev: sum(1 for f in diff.findings if f["severity"] == sev)
+                                 for sev in ("critical", "warning", "info") if any(f["severity"] == sev for f in diff.findings)}
         sources = graph.graph.get("sources")
         if sources:
             entry["sources_ok"] = [s["name"] for s in sources if s.get("status") == "ok"]

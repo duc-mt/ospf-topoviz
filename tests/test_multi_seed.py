@@ -602,6 +602,7 @@ class FakeConn:
             ("router", "database router"),
             ("network", "database network"),
             ("neighbors", "neighbor"),
+            ("routes", "route ospf"),
         ):
             if marker in command:
                 return self.outputs.get(key, "")

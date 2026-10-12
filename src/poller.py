@@ -90,6 +90,7 @@ class RawLSDB:
     source: str  # host name/IP (or directory when replaying files)
     collected_at: str  # ISO-8601 UTC timestamp
     neighbors: str = ""  # neighbour-table output ("" = not collected or not supported on this platform)
+    routes: str = ""  # OSPF routing-table output ("" = not collected or not supported on this platform)
 
 
 class BasePoller(ABC):
@@ -117,6 +118,7 @@ class DevicePoller(BasePoller):
         device: dict[str, Any] | None = None,
         collect_neighbors: bool = True,
         apply_env: bool = True,
+        collect_routes: bool = True,
     ) -> None:
         """Load and validate the settings.
 
@@ -126,6 +128,7 @@ class DevicePoller(BasePoller):
             settings: Already-loaded settings, to avoid reading the file twice.
             device: One already-resolved router entry; skips reading settings.
             collect_neighbors: Also run the platform's neighbour-table command (best effort).
+            collect_routes: Also run the platform's OSPF routing-table command (best effort).
             apply_env: Let ``OSPF_MONITOR_*`` override the credentials (the single-device rule). Seed
                 entries are resolved by ``device_entries`` - own value, then environment - so it passes False.
 
@@ -192,6 +195,8 @@ class DevicePoller(BasePoller):
         }
         if collect_neighbors and (self.profile.neighbors is not None or overrides.get("neighbors")):
             self.commands["neighbors"] = self.profile.command("neighbors", self.process_id, overrides.get("neighbors"))
+        if collect_routes and (self.profile.routes is not None or overrides.get("routes")):
+            self.commands["routes"] = self.profile.command("routes", self.process_id, overrides.get("routes"))
 
     @classmethod
     def from_settings(
@@ -209,14 +214,15 @@ class DevicePoller(BasePoller):
         if settings is None:
             settings = load_settings(config_path)
         entries = device_entries(settings, str(config_path), hosts=hosts, device_type=device_type)
-        neighbors = PollingOptions.from_settings(settings.get("polling")).neighbors
+        polling = PollingOptions.from_settings(settings.get("polling"))
         return [
             cls(
                 config_path,
                 device_type=device_type,
                 settings=settings,
                 device=entry,
-                collect_neighbors=neighbors,
+                collect_neighbors=polling.neighbors,
+                collect_routes=polling.routes,
                 apply_env=bool(entry.get("_legacy")),
             )
             for entry in entries
@@ -251,14 +257,9 @@ class DevicePoller(BasePoller):
                 router = self._run(conn, "router")
                 # No Type 2 LSAs is legitimate (e.g. only point-to-point links).
                 network = self._run(conn, "network", allow_empty=True)
-                neighbors = ""
-                if "neighbors" in self.commands:
-                    # Extra detail only: never let it cost us the LSDB we already have.
-                    try:
-                        neighbors = self._run(conn, "neighbors", allow_empty=True)
-                    except (PollerError, NetmikoBaseException, ReadTimeout, SSHException, OSError) as exc:
-                        logger.warning("%s: could not read the neighbour table (%s); continuing without it",
-                                       self.host, _first_line(exc))
+                # Extra detail only: never let it cost us the LSDB we already have.
+                neighbors = self._run_optional(conn, "neighbors", "neighbour table")
+                routes = self._run_optional(conn, "routes", "routing table")
         except NetmikoAuthenticationException as exc:
             raise PollerAuthError(
                 f"Authentication failed for {self.host}: check username, password and enable secret"
@@ -285,7 +286,18 @@ class DevicePoller(BasePoller):
             source=self.host,
             collected_at=datetime.now(UTC).isoformat(timespec="seconds"),
             neighbors=neighbors,
+            routes=routes,
         )
+
+    def _run_optional(self, conn: Any, key: str, what: str) -> str:
+        """Run a command whose output is a bonus: any failure is logged and gives ``""``."""
+        if key not in self.commands:
+            return ""
+        try:
+            return self._run(conn, key, allow_empty=True)
+        except (PollerError, NetmikoBaseException, ReadTimeout, SSHException, OSError) as exc:
+            logger.warning("%s: could not read the %s (%s); continuing without it", self.host, what, _first_line(exc))
+            return ""
 
     def _run(self, conn: Any, key: str, allow_empty: bool = False) -> str:
         """Run one LSDB command and sanity-check its output."""
@@ -309,6 +321,7 @@ class FilePoller(BasePoller):
     ROUTER_FILE = "router_lsdb.txt"
     NETWORK_FILE = "network_lsdb.txt"
     NEIGHBORS_FILE = "neighbors.txt"
+    ROUTES_FILE = "routes.txt"
 
     def __init__(
         self,
@@ -342,7 +355,7 @@ class FilePoller(BasePoller):
                 raise PollerError(f"Could not read replay file {path}: {exc}") from exc
 
     def poll(self) -> RawLSDB:
-        """Read ``router_lsdb.txt`` (required); ``network_lsdb.txt`` and ``neighbors.txt`` are optional."""
+        """Read ``router_lsdb.txt`` (required); ``network_lsdb.txt``, ``neighbors.txt`` and ``routes.txt`` are optional."""
         router_path = self.directory / self.ROUTER_FILE
         network_path = self.directory / self.NETWORK_FILE
 
@@ -351,6 +364,7 @@ class FilePoller(BasePoller):
             raise PollerError(f"Required file missing or empty: {router_path}")
         network = self._read_with_timeout(network_path)
         neighbors = self._read_with_timeout(self.directory / self.NEIGHBORS_FILE)
+        routes = self._read_with_timeout(self.directory / self.ROUTES_FILE)
 
         return RawLSDB(
             router=router,
@@ -358,6 +372,7 @@ class FilePoller(BasePoller):
             source=str(self.directory),
             collected_at=datetime.now(UTC).isoformat(timespec="seconds"),
             neighbors=neighbors,
+            routes=routes,
         )
 
 
@@ -368,6 +383,7 @@ class PollingOptions:
     concurrency: int = 4  # routers polled at the same time
     require_all: bool = False  # abort the run if ANY router fails (default: carry on with the rest)
     neighbors: bool = True  # also read each router's neighbour table (adjacency state, interface names)
+    routes: bool = True  # also read each router's OSPF routing table (to check it against the LSDB)
 
     @classmethod
     def from_settings(cls, section: dict[str, Any] | None) -> "PollingOptions":
@@ -381,6 +397,7 @@ class PollingOptions:
                 concurrency=int(section.get("concurrency", 4)),
                 require_all=bool(section.get("require_all", False)),
                 neighbors=bool(section.get("neighbors", True)),
+                routes=bool(section.get("routes", True)),
             )
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"polling.concurrency must be an integer ({exc})") from exc

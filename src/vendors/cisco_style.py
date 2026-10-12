@@ -31,6 +31,7 @@ from src.vendors.base import (
     dotted_mask,
     link_kind,
     normalize_state,
+    parse_dead_time,
     parse_seq,
 )
 
@@ -48,7 +49,7 @@ _LS_AGE = re.compile(r"^\s*LS\s+age\s*:\s*(?:MAXAGE\()?(\d+)", re.IGNORECASE)
 _ABR_LINE = re.compile(r"^\s*Area\s+Border\s+Router\s*$", re.IGNORECASE)
 _ASBR_LINE = re.compile(r"^\s*AS\s+Boundary\s+Router\s*$", re.IGNORECASE)
 _ROUTER_FLAGS = re.compile(r"^\s*Flags:\s*0x([0-9a-fA-F]+)", re.IGNORECASE)
-_FRR_NEIGHBOR = re.compile(rf"^\s*({_IP})\s+(\d+)\s+(\S+)\s+\S+\s+\S+\s+({_IP})\s+(\S+)\s+\d+\s+\d+\s+\d+\s*$")
+_FRR_NEIGHBOR = re.compile(rf"^\s*({_IP})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+({_IP})\s+(\S+)\s+\d+\s+\d+\s+\d+\s*$")
 _LS_SEQ = re.compile(r"^\s*LS\s+Seq(?:uence)?\s+Number\s*:\s*(\S+)", re.IGNORECASE)
 _LS_TYPE = re.compile(r"^\s*LS\s+Type\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _LS_ID = re.compile(rf"^\s*Link\s+State\s+ID\s*:\s*({_IP})", re.IGNORECASE)
@@ -88,16 +89,24 @@ class CiscoStyleTextAdapter(LsdbAdapter):
 
     filters_by_process = True
 
-    def __init__(self, platform: str, metric_hint: str = "", neighbor_format: str | None = None) -> None:
+    def __init__(
+        self,
+        platform: str,
+        metric_hint: str = "",
+        neighbor_format: str | None = None,
+        route_format: str | None = None,
+    ) -> None:
         """
         Args:
             platform: Name used in error messages (e.g. ``"Arista EOS"``).
             metric_hint: Extra advice appended when the output has no link metrics.
             neighbor_format: ``"frr"`` or ``"arista"`` - which neighbour-table layout to parse (``None`` = none).
+            route_format: ``"frr"`` or ``"eos"`` - which routing-table layout to parse (``None`` = none).
         """
         self.platform = platform
         self.metric_hint = metric_hint
         self.neighbor_format = neighbor_format
+        self.route_format = route_format
 
     # ------------------------------------------------------------------ parse
     def parse(self, raw_router: str, raw_network: str, process_id: str | None) -> Lsdb:
@@ -167,12 +176,13 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             m = _FRR_NEIGHBOR.match(line)
             if not m:
                 continue
-            rid, _pri, state_text, address, interface = m.groups()
+            rid, pri, state_text, _uptime, dead, address, interface = m.groups()
             name, _, local = interface.rpartition(":")
             if not name or not re.fullmatch(_IP, local):  # no ":address" suffix
                 name = interface
             state, role = normalize_state(state_text)
-            records.append(NeighborRecord(router_id=rid, state=state, role=role, interface=name, address=address))
+            records.append(NeighborRecord(router_id=rid, state=state, role=role, interface=name, address=address,
+                                          priority=int(pri), dead_time=parse_dead_time(dead)))
         return records
 
     @staticmethod
@@ -189,7 +199,9 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 continue
             state, role = normalize_state(tokens[-4])
             records.append(NeighborRecord(router_id=tokens[0], state=state, role=role,
-                                          interface=tokens[-1], address=tokens[-2]))
+                                          interface=tokens[-1], address=tokens[-2],
+                                          priority=int(tokens[-5]) if tokens[-5].isdigit() else None,
+                                          dead_time=parse_dead_time(tokens[-3])))
         return records
 
     # ---------------------------------------------------------- state machine
@@ -259,8 +271,7 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             elif link is not None and (m := _LINK_ID.match(line)):
                 link.link_id = m.group(1)
             elif link is not None and (m := _LINK_DATA.match(line)):
-                if link.kind != KIND_STUB:  # for stubs this field is the network mask
-                    link.link_data = m.group(1)
+                link.link_data = m.group(1)  # own interface address; for stubs the network mask
             elif link is not None and (m := _METRIC.match(line)):
                 link.metric = int(m.group(1))
             elif m := _MASK.match(line):
