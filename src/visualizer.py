@@ -187,12 +187,19 @@ class TopologyVisualizer:
         self.layout = layout
         self.options = options or VisualOptions()
         self.image_format = self.output_path.suffix.lstrip(".").lower() or "png"
-        if self.image_format not in graphviz.FORMATS:
+        #: Names this network in the explorer page's saved-layout store (set by the caller, e.g. the seeds).
+        self.scope = "default"
+        if self.image_format not in ("html", "htm") and self.image_format not in graphviz.FORMATS:
             raise VisualizationError(
                 f"Unsupported output format '.{self.image_format}'"
             )
         if layout not in graphviz.ENGINES:
             raise VisualizationError(f"Unknown Graphviz layout engine '{layout}'")
+
+    @property
+    def interactive(self) -> bool:
+        """True when the output is the interactive HTML explorer rather than a Graphviz image."""
+        return self.image_format in ("html", "htm")
 
     # ---------------------------------------------------------------- building
     def build_digraph(
@@ -297,8 +304,9 @@ class TopologyVisualizer:
         return max(states, key=state_severity) if states else None
 
     # ------------------------------------------------------------------- links
+    @staticmethod
     def _collect_links(
-        self, graph: nx.DiGraph, diff: TopologyDiff, removed_nodes: dict[str, dict]
+        graph: nx.DiGraph, diff: TopologyDiff, removed_nodes: dict[str, dict]
     ) -> list[_Link]:
         """Merge directed edges (current + removed) into one ``_Link`` per node pair."""
         added = {(e["source"], e["target"]) for e in diff.added_edges}
@@ -621,10 +629,14 @@ class TopologyVisualizer:
         return "\\n".join(lines)
 
     # ---------------------------------------------------------------- rendering
-    def render(self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None) -> Path:
+    def render(
+        self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None, trace=None
+    ) -> Path:
         """Render the diagram to ``output_path`` and return the path of the image.
 
-        ``highlight`` (node pairs) draws a traced path in blue; see ``correlation.trace_prefix``.
+        ``highlight`` (node pairs) draws a traced path in blue; see ``correlation.trace_prefix``. With an
+        ``.html`` output the interactive explorer is written instead (no Graphviz needed); it takes the whole
+        ``trace`` result so it can show the path in its sidebar too.
 
         On failure to run Graphviz, the DOT source is saved next to the target
         so it can be rendered later with ``dot -Tpng``.
@@ -632,6 +644,12 @@ class TopologyVisualizer:
         Raises:
             VisualizationError: If Graphviz is missing or fails.
         """
+        if self.interactive:
+            from src.explorer import write_explorer  # noqa: PLC0415 - only needed for this output type
+
+            path = write_explorer(self.output_path, graph, diff, self.options, trace=trace, scope=self.scope)
+            logger.info("Wrote interactive topology explorer to %s", path)
+            return path
         dot = self.build_digraph(graph, diff, highlight)
         out_dir = self.output_path.parent
         stem = self.output_path.stem

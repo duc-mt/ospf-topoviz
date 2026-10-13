@@ -474,7 +474,7 @@ def lab(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", lab.data)
     monkeypatch.setattr("src.poller.ConnectHandler", lab.network)
 
-    def render(self, graph, diff, highlight=None):
+    def render(self, graph, diff, highlight=None, **_kw):
         lab.rendered.append(
             (self.build_digraph(graph, diff, highlight).source, highlight)
         )

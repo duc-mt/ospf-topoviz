@@ -219,6 +219,36 @@ What it cannot do, and why: only Type 1/2 LSAs are read, so inter-area and exter
 
 OSPF does not carry interface names or speeds, so the interface address (the "Link Data" field; an ifIndex on unnumbered links) is the identifier shown.
 
+### Interactive topology explorer
+
+The Graphviz image (`.png` / `.svg` / `.pdf`) is good for a report but hard to read on a busy network: routers are stacked in a column, every link crosses the page, labels collide. The **explorer** is a single self-contained HTML file (no network, no libraries) with its own layout:
+
+```bash
+python main.py --explorer                                  # also writes output/topology.html
+python main.py --explorer reports/lab.html                 # ... to a path of your choice
+python main.py --output output/topology.html               # only the explorer, no Graphviz needed
+python main.py --trace 10.136.4.9 --explorer               # the traced path is drawn and listed too
+```
+
+**Layout** (`src/layout.py`): a transit network is a *hub* and its routers sit on a ring around it (the ring grows with the number of routers; a very crowded hub gets two rings). A router's place on the ring follows the direction of its other connections, so spokes do not cross links that leave the hub. Each OSPF area is one box; the backbone is the root and the other areas hang below it, left to right. **ABRs sit on the border** between the boxes, straight above the area they lead to. One-way and stale links are drawn but are *weak*: they do not decide where anything goes, so a router that also points at a stale network stays on its real hub's ring and the stale network is parked beside the picture. A part of the topology that is cut off from the rest (the split the title warns about) is packed in its own column on the left of its area, apart from the main picture. The layout is deterministic and takes well under a second for a few hundred nodes.
+
+**In the page**
+
+| What | How |
+|---|---|
+| Sidebar *Diagnostics & Warnings* | Topology split, one-way links, stale routers, adjacency problems, suspect-run reasons, changes since the last run. **Click an entry and its routers/links are highlighted and centred** |
+| Cross-check findings | Neighbour and routing-table findings grouped by kind, severity chips to filter; the hint (likely cause) sits under each message. Click a finding to find its routers on the picture |
+| Hover | A link shows both directions: interface, IP, cost, adjacency state (`FULL (Green)`, ...); a node shows areas, LSA age, advertised prefixes, findings about it |
+| Click | A node: highlights it and its neighbours and dims the rest; a link: its details. `Esc` clears |
+| Labels | Costs are drawn as small pills with collision culling (the text keeps its screen size while you zoom); interface names appear on hover, on selection and when zoomed in |
+| Drag a node | Positions are saved **in the browser, per node ID**, and restored on the next run. *Reset Layout* forgets them. *Export / Import layout* moves them between machines (⚙) |
+| Search | Router ID, name, prefix (including prefixes a router advertises) or area; `Enter` zooms to the matches; `/` focuses the box |
+| Filter | One-way links on/off, cost and interface labels, area boxes, and per-area visibility |
+| Bundle | *Bundle leaf routers of a segment, from N*: routers whose only link is to one segment collapse into a single `×N routers` node on a thick link; click it, or search for one of them, to expand |
+| View | Wheel zoom, drag the background to pan, `+` `-` `f` (fit), full screen, *Download SVG* of the current picture |
+
+The explorer needs a current browser; the layout itself is computed by Python, so the picture is reproducible. The PNG/SVG/PDF output and `--layout` (the Graphviz engine) are unchanged.
+
 ### Credentials via environment variables
 
 With the single `device:` block these override anything in `settings.yaml`; with `seeds:` they fill in whatever a device leaves empty (see *Multi-seed polling*). Use them in CI or to avoid storing passwords on disk:
@@ -251,7 +281,9 @@ Options:
   --fail-on-findings    Exit with code 4 when the cross-checks report a critical finding
   --replay DIR          Parse saved CLI output instead of connecting via SSH
   --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
-  --output PATH         Diagram output path; extension sets format (png, svg, pdf, ...) (default: output/topology.png)
+  --output PATH         Diagram output path; extension sets format (png, svg, pdf, ... or html for the interactive
+                        explorer) (default: output/topology.png)
+  --explorer [PATH]     Also write the interactive topology explorer (default: output/topology.html)
   --layout ENGINE       Graphviz layout engine: dot, neato, fdp, sfdp, circo, ... (default: dot)
   --accept-changes      Commit this run as the new baseline even if the guard flagged it
   --dry-run             Build and diff the topology without saving any state files
@@ -414,6 +446,13 @@ pip install pytest
 pytest
 ```
 
+The explorer page itself (hover, select, drag and save, search, filters, bundles, export) is exercised in jsdom. Those tests are skipped unless node is installed; to run them:
+
+```bash
+npm install --prefix tests/js     # once: installs jsdom
+pytest tests/test_explorer_js.py
+```
+
 ---
 
 ## Project Structure
@@ -433,7 +472,10 @@ ospf-topoviz/
 │   ├── graph_engine.py       # NetworkX graph, diff, guard, state persistence
 │   ├── correlation.py        # SPF, LSDB-vs-neighbour, SPF-vs-RIB checks, neighbour flaps, prefix trace
 │   ├── report.py             # Modern box-drawing result table renderer
-│   ├── visualizer.py         # Graphviz rendering
+│   ├── visualizer.py         # Graphviz rendering (and the switch to the explorer for .html output)
+│   ├── layout.py             # Hub-and-spoke / area-box layout engine (pure geometry)
+│   ├── explorer.py           # Builds the interactive explorer: scene data + self-contained HTML
+│   ├── web/explorer.html     # The explorer page (HTML, CSS, JavaScript; no external resources)
 │   └── vendors/              # Per-platform LSDB parsers
 │       ├── base.py           # Neutral data model (LSAs, OSPFNeighbor, OSPFRoute) and adapter interface
 │       ├── routes.py         # Routing-table (RIB) parsers: IOS/EOS/FRR, NX-OS, Junos

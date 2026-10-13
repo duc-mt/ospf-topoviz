@@ -105,6 +105,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="exit with code 4 when the neighbour / routing-table cross-checks report a critical finding",
     )
     ap.add_argument(
+        "--explorer",
+        nargs="?",
+        const="output/topology.html",
+        metavar="PATH",
+        help="also write the interactive topology explorer (a single HTML file: hub-and-spoke layout, area boxes, "
+        "hover details, warnings sidebar, drag-and-drop with a saved layout); PATH defaults to output/topology.html. "
+        "An --output ending in .html writes only the explorer",
+    )
+    ap.add_argument(
         "--replay",
         type=Path,
         metavar="DIR",
@@ -390,6 +399,7 @@ def run(args: argparse.Namespace) -> int:
         raise PollerError(f"{reason}: {result.failure_report()}")
 
     answered = result.succeeded
+    scope = ",".join(sorted(s.host for s in answered))  # names this network in the explorer's saved layouts
     for seed in answered:
         ingested: SeedIngest = seed.parsed
         seed.lsas = len(ingested.lsdb.router_lsas) + len(ingested.lsdb.network_lsas)
@@ -427,8 +437,17 @@ def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("\n [DRY RUN] Topology diffed — no state files written.\n")
     # 4. Visualize
-    image = visualizer.render(graph, diff, highlight=trace.edges) if trace else visualizer.render(graph, diff)
-    print(f"\n Diagram   : {image}\n")
+    visualizer.scope = scope
+    if visualizer.interactive:
+        image = visualizer.render(graph, diff, trace=trace)
+    else:
+        image = visualizer.render(graph, diff, highlight=trace.edges) if trace else visualizer.render(graph, diff)
+    print(f"\n Diagram   : {image}")
+    if args.explorer:
+        page = TopologyVisualizer(output_path=args.explorer, options=visualizer.options)
+        page.scope = scope
+        print(f" Explorer  : {page.render(graph, diff, trace=trace)}")
+    print()
     if args.dry_run:
         return EXIT_FINDINGS if args.fail_on_findings and diff.critical_findings else EXIT_OK
     if not diff.baseline_updated:

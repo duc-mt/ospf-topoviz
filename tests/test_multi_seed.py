@@ -641,7 +641,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr("src.poller.ConnectHandler", e.network)
 
     def render(
-        self, graph, diff
+        self, graph, diff, highlight=None, **_kw
     ):  # no Graphviz binary needed: keep the DOT source for inspection
         e.rendered.append(self.build_digraph(graph, diff).source)
         return tmp_path / "topology.png"

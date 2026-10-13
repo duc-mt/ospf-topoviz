@@ -1,0 +1,6 @@
+{
+  "name": "ospf-explorer-page-tests",
+  "private": true,
+  "description": "Runs the explorer page in jsdom (tests/test_explorer_js.py). Install once: npm install --prefix tests/js",
+  "devDependencies": { "jsdom": "^26.0.0" }
+}

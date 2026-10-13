@@ -38,3 +38,5 @@ config/settings.local.yaml
 # OS files
 .DS_Store
 Thumbs.db
+tests/js/node_modules/
+tests/js/package-lock.json
