@@ -55,6 +55,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = BASE_DIR / "config" / "settings.yaml"
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_IMAGE = BASE_DIR / "output" / "topology.png"
+OUTPUT_HTML = BASE_DIR / "output" / "topology.html"
 
 EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_SUSPECT, EXIT_FINDINGS = 0, 1, 2, 3, 4
 
@@ -104,15 +105,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="exit with code 4 when the neighbour / routing-table cross-checks report a critical finding",
     )
-    ap.add_argument(
-        "--explorer",
-        nargs="?",
-        const="output/topology.html",
-        metavar="PATH",
-        help="also write the interactive topology explorer (a single HTML file: hub-and-spoke layout, area boxes, "
-        "hover details, warnings sidebar, drag-and-drop with a saved layout); PATH defaults to output/topology.html. "
-        "An --output ending in .html writes only the explorer",
-    )
+
     ap.add_argument(
         "--replay",
         type=Path,
@@ -443,8 +436,8 @@ def run(args: argparse.Namespace) -> int:
     else:
         image = visualizer.render(graph, diff, highlight=trace.edges) if trace else visualizer.render(graph, diff)
     print(f"\n Diagram   : {image}")
-    if args.explorer:
-        page = TopologyVisualizer(output_path=args.explorer, options=visualizer.options)
+    if not visualizer.interactive:
+        page = TopologyVisualizer(output_path=OUTPUT_HTML, options=visualizer.options)
         page.scope = scope
         print(f" Explorer  : {page.render(graph, diff, trace=trace)}")
     print()

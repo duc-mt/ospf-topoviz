@@ -221,13 +221,14 @@ OSPF does not carry interface names or speeds, so the interface address (the "Li
 
 ### Interactive topology explorer
 
-The Graphviz image (`.png` / `.svg` / `.pdf`) is good for a report but hard to read on a busy network: routers are stacked in a column, every link crosses the page, labels collide. The **explorer** is a single self-contained HTML file (no network, no libraries) with its own layout:
+The Graphviz image (`.png` / `.svg` / `.pdf`) is good for a report but hard to read on a busy network: routers are stacked in a column, every link crosses the page, labels collide. The **explorer** is a single self-contained HTML file (no network, no libraries) with its own layout.
+
+By default, every run automatically writes both `output/topology.png` and `output/topology.html`:
 
 ```bash
-python main.py --explorer                                  # also writes output/topology.html
-python main.py --explorer reports/lab.html                 # ... to a path of your choice
+python main.py                                             # writes output/topology.png AND output/topology.html
 python main.py --output output/topology.html               # only the explorer, no Graphviz needed
-python main.py --trace 10.136.4.9 --explorer               # the traced path is drawn and listed too
+python main.py --trace 10.136.4.9                          # the traced path is drawn in both PNG and HTML
 ```
 
 **Layout** (`src/layout.py`): a transit network is a *hub* and its routers sit on a ring around it (the ring grows with the number of routers; a very crowded hub gets two rings). A router's place on the ring follows the direction of its other connections, so spokes do not cross links that leave the hub. Each OSPF area is one box; the backbone is the root and the other areas hang below it, left to right. **ABRs sit on the border** between the boxes, straight above the area they lead to. One-way and stale links are drawn but are *weak*: they do not decide where anything goes, so a router that also points at a stale network stays on its real hub's ring and the stale network is parked beside the picture. A part of the topology that is cut off from the rest (the split the title warns about) is packed in its own column on the left of its area, apart from the main picture. The layout is deterministic and takes well under a second for a few hundred nodes.
@@ -283,7 +284,6 @@ Options:
   --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
   --output PATH         Diagram output path; extension sets format (png, svg, pdf, ... or html for the interactive
                         explorer) (default: output/topology.png)
-  --explorer [PATH]     Also write the interactive topology explorer (default: output/topology.html)
   --layout ENGINE       Graphviz layout engine: dot, neato, fdp, sfdp, circo, ... (default: dot)
   --accept-changes      Commit this run as the new baseline even if the guard flagged it
   --dry-run             Build and diff the topology without saving any state files

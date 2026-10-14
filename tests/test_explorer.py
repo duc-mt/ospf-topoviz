@@ -399,10 +399,11 @@ def test_output_html_writes_only_the_explorer(cli, tmp_path, capsys):
     )
 
 
-def test_explorer_flag_adds_the_page_next_to_the_normal_image(
+
+def test_default_run_writes_both_diagram_and_explorer(
     cli, tmp_path, monkeypatch, capsys
 ):
-    """The usual image still goes through Graphviz (faked here); the page is written for real."""
+    """By default (with --output png), both the image and default HTML explorer are produced."""
     real, images = TopologyVisualizer.render, []
 
     def render(self, graph, diff, highlight=None, **kw):
@@ -412,12 +413,18 @@ def test_explorer_flag_adds_the_page_next_to_the_normal_image(
         return self.output_path
 
     monkeypatch.setattr(main.TopologyVisualizer, "render", render)
-    assert (
-        cli("--output", str(tmp_path / "t.png"), "--explorer", str(tmp_path / "x.html"))
-        == main.EXIT_OK
-    )
-    assert "Explorer  :" in capsys.readouterr().out
-    assert (tmp_path / "x.html").exists() and images == [tmp_path / "t.png"]
+    html_target = tmp_path / "output" / "topology.html"
+    png_target = tmp_path / "output" / "topology.png"
+    monkeypatch.setattr(main, "OUTPUT_IMAGE", png_target)
+    monkeypatch.setattr(main, "OUTPUT_HTML", html_target)
+
+    # CLI called with no --explorer flag
+    assert cli("--output", str(png_target)) == main.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Diagram   :" in out
+    assert "Explorer  :" in out
+    assert html_target.exists()
+    assert images == [png_target]
 
 
 def test_trace_and_findings_reach_the_explorer(cli, tmp_path):
