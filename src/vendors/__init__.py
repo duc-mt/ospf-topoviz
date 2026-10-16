@@ -65,9 +65,16 @@ class VendorProfile:
                     f"device.commands.{which} uses {{pid}} but ospf_process_id is not set"
                 )
             return override.replace("{pid}", process_id)
-        pair = {"router": self.router, "network": self.network, "neighbors": self.neighbors, "routes": self.routes}[which]
+        pair = {
+            "router": self.router,
+            "network": self.network,
+            "neighbors": self.neighbors,
+            "routes": self.routes,
+        }[which]
         if pair is None:
-            raise ConfigError(f"{self.key}: no '{which}' command is defined for this platform")
+            raise ConfigError(
+                f"{self.key}: no '{which}' command is defined for this platform"
+            )
         if process_id is not None and pair.with_pid:
             return pair.with_pid.replace("{pid}", process_id)
         return pair.default
@@ -84,7 +91,9 @@ def _genie_cisco(
     def factory() -> LsdbAdapter:
         from src.vendors.genie_cisco import GenieCiscoAdapter
 
-        return GenieCiscoAdapter(module, router_cls, network_cls, neighbor, route_format)
+        return GenieCiscoAdapter(
+            module, router_cls, network_cls, neighbor, route_format
+        )
 
     return factory
 
@@ -117,6 +126,18 @@ def _huawei() -> LsdbAdapter:
     from src.vendors.huawei import HuaweiAdapter
 
     return HuaweiAdapter()
+
+
+def _aruba_aoscx() -> LsdbAdapter:
+    from src.vendors.cisco_style import CiscoStyleTextAdapter
+
+    return CiscoStyleTextAdapter(
+        "Aruba AOS-CX",
+        metric_hint="Use the detailed form via device.commands in settings.yaml, "
+        "e.g. 'show ip ospf database router detail'.",
+        neighbor_format="arista",
+        route_format="eos",
+    )
 
 
 # ------------------------------------------------------------------- registry
@@ -156,7 +177,11 @@ register(
             "show ip ospf database network", "show ip ospf {pid} database network"
         ),
         adapter_factory=_genie_cisco(
-            _IOSXE, "ShowIpOspfDatabaseRouter", "ShowIpOspfDatabaseNetwork", _IOSXE_NBR, "ios"
+            _IOSXE,
+            "ShowIpOspfDatabaseRouter",
+            "ShowIpOspfDatabaseNetwork",
+            _IOSXE_NBR,
+            "ios",
         ),
         error_markers=_IOS_ERRORS,
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
@@ -194,10 +219,16 @@ register(
             "show ip ospf {pid} database network detail",
         ),
         adapter_factory=_genie_cisco(
-            _NXOS, "ShowIpOspfDatabaseRouterDetail", "ShowIpOspfDatabaseNetworkDetail", _NXOS_NBR, "nxos"
+            _NXOS,
+            "ShowIpOspfDatabaseRouterDetail",
+            "ShowIpOspfDatabaseNetworkDetail",
+            _NXOS_NBR,
+            "nxos",
         ),
         error_markers=_IOS_ERRORS,
-        neighbors=CommandPair("show ip ospf neighbors detail", "show ip ospf {pid} neighbors detail"),
+        neighbors=CommandPair(
+            "show ip ospf neighbors detail", "show ip ospf {pid} neighbors detail"
+        ),
         routes=CommandPair("show ip route ospf"),
     )
 )
@@ -267,10 +298,33 @@ register(
             "Error: Unrecognized command",
             "Error: Incomplete command",
         ),
-        neighbors=CommandPair("display ospf peer brief", "display ospf {pid} peer brief"),
+        neighbors=CommandPair(
+            "display ospf peer brief", "display ospf {pid} peer brief"
+        ),
     ),
     "huawei",
     "huawei_vrpv8",
+)
+register(
+    VendorProfile(
+        key="aruba_aoscx",
+        description="Aruba AOS-CX (text parser; Arista-compatible OSPF output)",
+        router=CommandPair(
+            "show ip ospf database router", "show ip ospf {pid} database router"
+        ),
+        network=CommandPair(
+            "show ip ospf database network", "show ip ospf {pid} database network"
+        ),
+        adapter_factory=_aruba_aoscx,
+        error_markers=(
+            "% Invalid input",
+            "% Incomplete command",
+            "% Ambiguous command",
+            "Command not found",
+        ),
+        neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
+        routes=CommandPair("show ip route ospf"),
+    )
 )
 
 #: Platforms that are known but deliberately not supported, with the reason.

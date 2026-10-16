@@ -35,7 +35,7 @@ EXPECTED_EDGES = {
     ("net-192.168.1.1", "10.0.0.1", 0, "attachment"),
     ("net-192.168.1.1", "10.0.0.3", 0, "attachment"),
 }
-VENDORS = ["cisco_ios", "juniper_junos", "arista_eos", "vyos", "huawei"]
+VENDORS = ["cisco_ios", "juniper_junos", "arista_eos", "vyos", "huawei", "aruba_aoscx"]
 
 
 def load(vendor: str) -> tuple[str, str]:
@@ -193,9 +193,14 @@ def test_unsupported_vendor_messages():
         get_profile("mikrotik_routeros")
     with pytest.raises(UnsupportedVendorError, match="Supported:"):
         get_profile("no_such_vendor")
-    assert {"cisco_ios", "juniper_junos", "arista_eos", "vyos", "huawei"} <= set(
-        supported_device_types()
-    )
+    assert {
+        "cisco_ios",
+        "juniper_junos",
+        "arista_eos",
+        "vyos",
+        "huawei",
+        "aruba_aoscx",
+    } <= set(supported_device_types())
 
 
 @pytest.mark.parametrize(
