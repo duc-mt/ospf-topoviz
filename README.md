@@ -72,12 +72,12 @@ pip install -r requirements.lock
 Try any of the bundled vendor samples:
 
 ```bash
-# Linux / macOS / WSL
-./run.sh --replay samples/vyos
-./run.sh --replay samples/cisco_ios
+# Universal cross-platform launcher (Linux / macOS / WSL / Git Bash):
+./run --replay samples/vyos
+./run --replay samples/cisco_ios
 
-# Windows (CMD / PowerShell)
-run.bat --replay samples\vyos
+# Windows CMD (if preferred):
+scripts\run.bat --replay samples\vyos
 
 # Or directly with Python
 python main.py --replay samples/vyos
@@ -90,8 +90,7 @@ The topology diagram is written to `output/topology.png`.
 Edit `config/settings.yaml` (or set environment variables) and run:
 
 ```bash
-./run.sh          # Linux / macOS / WSL
-run.bat           # Windows
+./run
 ```
 
 ---
@@ -487,8 +486,10 @@ pytest tests/test_explorer_js.py
 
 ```
 ospf-topoviz/
-├── run.sh                    # Universal launcher (Linux/macOS/WSL)
-├── run.bat                   # Universal launcher (Windows CMD/PowerShell)
+├── run                      # Universal cross-platform launcher
+├── scripts/
+│   ├── run.sh               # Unix bash launcher
+│   └── run.bat              # Windows launcher
 ├── main.py                   # CLI entry point & pipeline orchestrator
 ├── config/
 │   ├── settings.yaml.example # Tracked template configuration
