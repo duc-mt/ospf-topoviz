@@ -171,6 +171,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="generate sample settings.yaml in the current directory and exit",
     )
+    ap.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap.parse_args(argv)
 
