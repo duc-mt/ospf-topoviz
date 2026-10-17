@@ -13,13 +13,14 @@ rem ============================================================================
 setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
-set "VENV_DIR=%SCRIPT_DIR%.venv"
+set "ROOT_DIR=%SCRIPT_DIR%..\"
+set "VENV_DIR=%ROOT_DIR%.venv"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 
 REM 1. Initialize config\settings.yaml from example if missing
-if not exist "%SCRIPT_DIR%config\settings.yaml" (
-    if exist "%SCRIPT_DIR%config\settings.yaml.example" (
-        copy "%SCRIPT_DIR%config\settings.yaml.example" "%SCRIPT_DIR%config\settings.yaml" >nul
+if not exist "%ROOT_DIR%config\settings.yaml" (
+    if exist "%ROOT_DIR%config\settings.yaml.example" (
+        copy "%ROOT_DIR%config\settings.yaml.example" "%ROOT_DIR%config\settings.yaml" >nul
         echo Initialized config\settings.yaml from template.
     )
 )
@@ -40,14 +41,14 @@ if not exist "%VENV_PYTHON%" (
         exit /b 1
     )
 
-    if exist "%SCRIPT_DIR%requirements.lock" (
+    if exist "%ROOT_DIR%requirements.lock" (
         echo Installing locked dependencies...
-        "%VENV_DIR%\Scripts\pip.exe" install --quiet -r "%SCRIPT_DIR%requirements.lock"
-    ) else if exist "%SCRIPT_DIR%requirements.txt" (
+        "%VENV_DIR%\Scripts\pip.exe" install --quiet -r "%ROOT_DIR%requirements.lock"
+    ) else if exist "%ROOT_DIR%requirements.txt" (
         echo Installing dependencies from requirements.txt...
-        "%VENV_DIR%\Scripts\pip.exe" install --quiet -r "%SCRIPT_DIR%requirements.txt"
+        "%VENV_DIR%\Scripts\pip.exe" install --quiet -r "%ROOT_DIR%requirements.txt"
     )
 )
 
 REM 3. Execute main.py with virtual environment python forwarding all arguments
-"%VENV_PYTHON%" "%SCRIPT_DIR%main.py" %*
+"%VENV_PYTHON%" "%ROOT_DIR%main.py" %*

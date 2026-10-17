@@ -11,12 +11,13 @@
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/.venv"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+VENV_DIR="$ROOT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 
 # 1. Initialize config/settings.yaml from example if missing
-if [ ! -f "$SCRIPT_DIR/config/settings.yaml" ] && [ -f "$SCRIPT_DIR/config/settings.yaml.example" ]; then
-    cp "$SCRIPT_DIR/config/settings.yaml.example" "$SCRIPT_DIR/config/settings.yaml"
+if [ ! -f "$ROOT_DIR/config/settings.yaml" ] && [ -f "$ROOT_DIR/config/settings.yaml.example" ]; then
+    cp "$ROOT_DIR/config/settings.yaml.example" "$ROOT_DIR/config/settings.yaml"
     echo "Initialized config/settings.yaml from template."
 fi
 
@@ -36,14 +37,14 @@ if [ ! -f "$VENV_PYTHON" ]; then
 
     "$PYTHON_CMD" -m venv "$VENV_DIR"
 
-    if [ -f "$SCRIPT_DIR/requirements.lock" ]; then
+    if [ -f "$ROOT_DIR/requirements.lock" ]; then
         echo "Installing locked dependencies..."
-        "$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.lock"
-    elif [ -f "$SCRIPT_DIR/requirements.txt" ]; then
+        "$VENV_DIR/bin/pip" install --quiet -r "$ROOT_DIR/requirements.lock"
+    elif [ -f "$ROOT_DIR/requirements.txt" ]; then
         echo "Installing dependencies from requirements.txt..."
-        "$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.txt"
+        "$VENV_DIR/bin/pip" install --quiet -r "$ROOT_DIR/requirements.txt"
     fi
 fi
 
 # 3. Execute main.py with virtual environment python forwarding all arguments
-exec "$VENV_PYTHON" "$SCRIPT_DIR/main.py" "$@"
+exec "$VENV_PYTHON" "$ROOT_DIR/main.py" "$@"
