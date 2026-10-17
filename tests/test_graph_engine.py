@@ -230,26 +230,36 @@ def test_interface_address_survives_state_round_trip_and_reaches_removed_edge_re
 
 
 # ------------------------------------------- unreachable seeds (multi-seed merge)
-def test_unreachable_seed_makes_the_run_suspect_even_when_every_node_is_still_there(tmp_path):
+def test_unreachable_seed_makes_the_run_suspect_even_when_every_node_is_still_there(
+    tmp_path,
+):
     """Retention alone cannot see a missing seed whose area is small, so the guard is told about it."""
     engine = GraphEngine(tmp_path)
     engine.process(topology(extra_routers=1))
     before = read(engine.current_path)
-    graph, diff = engine.process(topology(extra_routers=1), partial_sources=["10.255.255.10"])
+    graph, diff = engine.process(
+        topology(extra_routers=1), partial_sources=["10.255.255.10"]
+    )
     assert not diff.baseline_updated
     assert any("10.255.255.10" in reason for reason in diff.suspect_reasons)
-    assert read(engine.current_path) == before  # atomic rotation untouched: baseline kept as it was
+    assert (
+        read(engine.current_path) == before
+    )  # atomic rotation untouched: baseline kept as it was
     assert engine.suspect_path.exists()
 
 
 def test_unreachable_seed_can_be_overridden_with_accept_changes(tmp_path):
     engine = GraphEngine(tmp_path)
     engine.process(topology())
-    _graph, diff = engine.process(topology(), partial_sources=["h"], accept_changes=True)
+    _graph, diff = engine.process(
+        topology(), partial_sources=["h"], accept_changes=True
+    )
     assert diff.baseline_updated and diff.suspect_reasons
 
 
-def test_unreachable_seed_is_ignored_on_the_first_run_and_when_the_guard_is_off(tmp_path):
+def test_unreachable_seed_is_ignored_on_the_first_run_and_when_the_guard_is_off(
+    tmp_path,
+):
     first = GraphEngine(tmp_path / "first")
     _graph, diff = first.process(topology(), partial_sources=["h"])
     assert diff.baseline_updated and not diff.suspect_reasons

@@ -89,8 +89,17 @@ class GenieJunosAdapter(LsdbAdapter):
             lsdb.router_lsas.extend(
                 self._router_lsa(area, d) for d in lsas if d.get("lsa-type") == "Router"
             )
-            if lsdb.router_id is None:  # Junos marks the router's own LSAs ("*" / our-entry)
-                lsdb.router_id = next((_clean(d.get("advertising-router")) for d in lsas if d.get("our-entry")), None)
+            if (
+                lsdb.router_id is None
+            ):  # Junos marks the router's own LSAs ("*" / our-entry)
+                lsdb.router_id = next(
+                    (
+                        _clean(d.get("advertising-router"))
+                        for d in lsas
+                        if d.get("our-entry")
+                    ),
+                    None,
+                )
         for area, lsas in self._lsas_by_area(raw_network, "network", required=False):
             lsdb.network_lsas.extend(
                 self._network_lsa(area, d)
@@ -138,20 +147,30 @@ class GenieJunosAdapter(LsdbAdapter):
         except self._empty_exc:
             return []
         except Exception as exc:
-            raise ParserError(f"Genie failed to parse the Junos neighbour table: {exc!r}") from exc
+            raise ParserError(
+                f"Genie failed to parse the Junos neighbour table: {exc!r}"
+            ) from exc
         records = []
         for nbr in as_list(info.get("ospf-neighbor")):
             state, role = normalize_state(nbr.get("ospf-neighbor-state", ""))
             address = nbr.get("neighbor-address")
             if role is None and detailed:
-                role = role_from_dr(address, nbr.get("dr-address"), nbr.get("bdr-address"))
+                role = role_from_dr(
+                    address, nbr.get("dr-address"), nbr.get("bdr-address")
+                )
             priority = nbr.get("neighbor-priority")
-            records.append(NeighborRecord(
-                router_id=_clean(nbr.get("neighbor-id")), state=state, role=role,
-                interface=nbr.get("interface-name"), address=address, area=nbr.get("ospf-area"),
-                priority=int(priority) if str(priority or "").isdigit() else None,
-                dead_time=parse_dead_time(nbr.get("activity-timer")),
-            ))
+            records.append(
+                NeighborRecord(
+                    router_id=_clean(nbr.get("neighbor-id")),
+                    state=state,
+                    role=role,
+                    interface=nbr.get("interface-name"),
+                    address=address,
+                    area=nbr.get("ospf-area"),
+                    priority=int(priority) if str(priority or "").isdigit() else None,
+                    dead_time=parse_dead_time(nbr.get("activity-timer")),
+                )
+            )
         return records
 
     # ---------------------------------------------------------------- mapping
@@ -173,7 +192,9 @@ class GenieJunosAdapter(LsdbAdapter):
                 metric = int(link.get("metric"))
             except (TypeError, ValueError):
                 metric = None
-            link_data = _clean(link.get("link-data")) or None  # own address; for a stub its mask
+            link_data = (
+                _clean(link.get("link-data")) or None
+            )  # own address; for a stub its mask
             router.links.append(
                 LinkRecord(
                     kind=kind,

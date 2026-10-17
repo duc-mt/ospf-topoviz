@@ -216,6 +216,6 @@ def test_suspect_run_appends_changelog_with_suspect_status(tmp_path):
     shrunken = {**_topology(), "nodes": [_topology()["nodes"][0]], "edges": []}
     engine.process(shrunken)
     lines = engine.changelog_path.read_text().splitlines()
-    entries = [json.loads(l) for l in lines]
+    entries = [json.loads(line) for line in lines]
     statuses = [e["status"] for e in entries]
     assert "suspect" in statuses

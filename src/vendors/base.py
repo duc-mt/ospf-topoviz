@@ -113,8 +113,12 @@ class NeighborRecord:
 
     router_id: str  # the neighbour's router ID
     state: str  # normalised: Full, 2-Way, Init, ExStart, Exchange, Loading, Down, Attempt (else as printed)
-    role: str | None = None  # DR | BDR | DROther | None (point-to-point, or not printed)
-    interface: str | None = None  # the polled router's own interface towards the neighbour
+    role: str | None = (
+        None  # DR | BDR | DROther | None (point-to-point, or not printed)
+    )
+    interface: str | None = (
+        None  # the polled router's own interface towards the neighbour
+    )
     address: str | None = None  # the neighbour's interface address
     area: str | None = None
     priority: int | None = None  # the neighbour's router priority (DR election)
@@ -155,8 +159,12 @@ class OSPFRoute:
     route_type: str  # ROUTE_INTRA | ROUTE_INTER | ROUTE_E1 | ... (or ROUTE_INTERNAL / ROUTE_EXTERNAL)
     metric: int | None = None  # the route's cost
     tag: int | None = None  # route tag, where the platform prints it
-    distance: int | None = None  # administrative distance / preference (110 for internal OSPF routes)
-    next_hops: list[NextHop] = field(default_factory=list)  # more than one = equal-cost multipath
+    distance: int | None = (
+        None  # administrative distance / preference (110 for internal OSPF routes)
+    )
+    next_hops: list[NextHop] = field(
+        default_factory=list
+    )  # more than one = equal-cost multipath
     process_id: str | None = None
     #: False when the platform lists the OSPF route but another source won (FRR: no ``>``; Junos: no ``*``),
     #: e.g. a static or BGP route with a lower distance. Platforms that only list installed routes are always True.
@@ -174,7 +182,12 @@ class OSPFRoute:
     def from_cidr(cls, cidr: str, route_type: str, **fields) -> OSPFRoute:
         """Build from ``10.1.1.0/24`` (host bits, if any, are cleared)."""
         net = ipaddress.IPv4Network(cidr, strict=False)
-        return cls(prefix=str(net.network_address), mask=str(net.netmask), route_type=route_type, **fields)
+        return cls(
+            prefix=str(net.network_address),
+            mask=str(net.netmask),
+            route_type=route_type,
+            **fields,
+        )
 
 
 @dataclass
@@ -202,7 +215,9 @@ class LsdbAdapter(ABC):
     def parse(self, raw_router: str, raw_network: str, process_id: str | None) -> Lsdb:
         """Parse raw output. ``process_id`` (if given) selects one OSPF process."""
 
-    def parse_neighbors(self, raw: str, process_id: str | None) -> list[NeighborRecord] | None:
+    def parse_neighbors(
+        self, raw: str, process_id: str | None
+    ) -> list[NeighborRecord] | None:
         """Parse the neighbour table; ``None`` means this platform has no neighbour parser."""
         return None
 
@@ -256,10 +271,24 @@ def as_list(value) -> list:
 
 
 _STATES = {
-    "DOWN": "Down", "ATTEMPT": "Attempt", "INIT": "Init", "2WAY": "2-Way", "2WAYS": "2-Way", "TWOWAY": "2-Way",
-    "EXSTART": "ExStart", "EXCHANGE": "Exchange", "LOADING": "Loading", "FULL": "Full",
+    "DOWN": "Down",
+    "ATTEMPT": "Attempt",
+    "INIT": "Init",
+    "2WAY": "2-Way",
+    "2WAYS": "2-Way",
+    "TWOWAY": "2-Way",
+    "EXSTART": "ExStart",
+    "EXCHANGE": "Exchange",
+    "LOADING": "Loading",
+    "FULL": "Full",
 }
-_ROLES = {"DR": "DR", "BDR": "BDR", "BACKUP": "BDR", "DROTHER": "DROther", "OTHER": "DROther"}
+_ROLES = {
+    "DR": "DR",
+    "BDR": "BDR",
+    "BACKUP": "BDR",
+    "DROTHER": "DROther",
+    "OTHER": "DROther",
+}
 
 
 def normalize_state(text: str) -> tuple[str, str | None]:
@@ -290,7 +319,6 @@ def parse_seq(text) -> int | None:
         return None
 
 
-
 def parse_dead_time(text) -> int | None:
     """Seconds from a dead-timer column: ``00:00:33``, ``33.5s``, ``37`` (Junos). ``None`` if unparseable."""
     if text is None:
@@ -316,7 +344,16 @@ def role_from_dr(address: str | None, dr: str | None, bdr: str | None) -> str | 
 
 
 #: How bad each adjacency state is (higher = worse); anything unknown ranks with Down.
-_STATE_SEVERITY = {"Full": 0, "2-Way": 1, "Loading": 2, "Exchange": 3, "ExStart": 4, "Init": 5, "Attempt": 6, "Down": 7}
+_STATE_SEVERITY = {
+    "Full": 0,
+    "2-Way": 1,
+    "Loading": 2,
+    "Exchange": 3,
+    "ExStart": 4,
+    "Init": 5,
+    "Attempt": 6,
+    "Down": 7,
+}
 
 
 def state_severity(state: str | None) -> int:

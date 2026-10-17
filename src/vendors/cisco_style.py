@@ -49,7 +49,9 @@ _LS_AGE = re.compile(r"^\s*LS\s+age\s*:\s*(?:MAXAGE\()?(\d+)", re.IGNORECASE)
 _ABR_LINE = re.compile(r"^\s*Area\s+Border\s+Router\s*$", re.IGNORECASE)
 _ASBR_LINE = re.compile(r"^\s*AS\s+Boundary\s+Router\s*$", re.IGNORECASE)
 _ROUTER_FLAGS = re.compile(r"^\s*Flags:\s*0x([0-9a-fA-F]+)", re.IGNORECASE)
-_FRR_NEIGHBOR = re.compile(rf"^\s*({_IP})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+({_IP})\s+(\S+)\s+\d+\s+\d+\s+\d+\s*$")
+_FRR_NEIGHBOR = re.compile(
+    rf"^\s*({_IP})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+({_IP})\s+(\S+)\s+\d+\s+\d+\s+\d+\s*$"
+)
 _LS_SEQ = re.compile(r"^\s*LS\s+Seq(?:uence)?\s+Number\s*:\s*(\S+)", re.IGNORECASE)
 _LS_TYPE = re.compile(r"^\s*LS\s+Type\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _LS_ID = re.compile(rf"^\s*Link\s+State\s+ID\s*:\s*({_IP})", re.IGNORECASE)
@@ -64,7 +66,6 @@ _MASK = re.compile(r"^\s*Network\s+Mask\s*:\s*(\S+)", re.IGNORECASE)
 _ATTACHED = re.compile(rf"^\s*Attached\s+Router\s*:\s*({_IP})", re.IGNORECASE)
 
 DEFAULT_VRF = "default"
-UNKNOWN_AREA = "n/a"  # Arista's per-LSA detail view has no area banner
 
 
 @dataclass
@@ -114,8 +115,15 @@ class CiscoStyleTextAdapter(LsdbAdapter):
         router_text, seen = self._scan(raw_router)
         network_text, seen_net = self._scan(raw_network)
         lsdb.process_ids = sorted(set(seen.processes) | set(seen_net.processes))
-        lsdb.router_id = next((rid for rid, proc, vrf in seen.headers
-                               if (vrf in (None, DEFAULT_VRF)) and (process_id is None or proc in (None, process_id))), None)
+        lsdb.router_id = next(
+            (
+                rid
+                for rid, proc, vrf in seen.headers
+                if (vrf in (None, DEFAULT_VRF))
+                and (process_id is None or proc in (None, process_id))
+            ),
+            None,
+        )
 
         for lsa in router_text:
             if self._wanted(lsa, process_id) and lsa.lsa_type.lower().startswith(
@@ -123,8 +131,13 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             ):
                 lsdb.router_lsas.append(
                     RouterLsa(
-                        router_id=lsa.adv or lsa.lsa_id, area=lsa.area, links=lsa.links, seq=lsa.seq,
-                        age=lsa.age, abr=lsa.abr, asbr=lsa.asbr
+                        router_id=lsa.adv or lsa.lsa_id,
+                        area=lsa.area,
+                        links=lsa.links,
+                        seq=lsa.seq,
+                        age=lsa.age,
+                        abr=lsa.abr,
+                        asbr=lsa.asbr,
                     )
                 )
         for lsa in network_text:
@@ -153,15 +166,19 @@ class CiscoStyleTextAdapter(LsdbAdapter):
 
     def _require_metrics(self, lsdb: Lsdb) -> None:
         """Fail loudly if links exist but none carries a metric (summary view instead of detail)."""
-        links = [l for r in lsdb.router_lsas for l in r.links if l.kind != KIND_STUB]
-        if links and all(l.metric is None for l in links):
+        links = [
+            link for r in lsdb.router_lsas for link in r.links if link.kind != KIND_STUB
+        ]
+        if links and all(link.metric is None for link in links):
             raise ParserError(
                 f"{self.platform}: router LSAs were found but none has a 'TOS 0 Metric' line, so link "
                 f"costs are unknown. {self.metric_hint}".strip()
             )
 
     # ------------------------------------------------------------- neighbours
-    def parse_neighbors(self, raw: str, process_id: str | None) -> list[NeighborRecord] | None:
+    def parse_neighbors(
+        self, raw: str, process_id: str | None
+    ) -> list[NeighborRecord] | None:
         if self.neighbor_format == "frr":
             return self._frr_neighbors(raw)
         if self.neighbor_format == "arista":
@@ -181,8 +198,17 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             if not name or not re.fullmatch(_IP, local):  # no ":address" suffix
                 name = interface
             state, role = normalize_state(state_text)
-            records.append(NeighborRecord(router_id=rid, state=state, role=role, interface=name, address=address,
-                                          priority=int(pri), dead_time=parse_dead_time(dead)))
+            records.append(
+                NeighborRecord(
+                    router_id=rid,
+                    state=state,
+                    role=role,
+                    interface=name,
+                    address=address,
+                    priority=int(pri),
+                    dead_time=parse_dead_time(dead),
+                )
+            )
         return records
 
     @staticmethod
@@ -194,14 +220,25 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             tokens = line.split()
             if len(tokens) not in (7, 8) or not re.fullmatch(_IP, tokens[0]):
                 continue
-            instance, vrf = (tokens[1], tokens[2]) if len(tokens) == 8 else (None, tokens[1])
-            if vrf != DEFAULT_VRF or (process_id is not None and instance not in (None, process_id)):
+            instance, vrf = (
+                (tokens[1], tokens[2]) if len(tokens) == 8 else (None, tokens[1])
+            )
+            if vrf != DEFAULT_VRF or (
+                process_id is not None and instance not in (None, process_id)
+            ):
                 continue
             state, role = normalize_state(tokens[-4])
-            records.append(NeighborRecord(router_id=tokens[0], state=state, role=role,
-                                          interface=tokens[-1], address=tokens[-2],
-                                          priority=int(tokens[-5]) if tokens[-5].isdigit() else None,
-                                          dead_time=parse_dead_time(tokens[-3])))
+            records.append(
+                NeighborRecord(
+                    router_id=tokens[0],
+                    state=state,
+                    role=role,
+                    interface=tokens[-1],
+                    address=tokens[-2],
+                    priority=int(tokens[-5]) if tokens[-5].isdigit() else None,
+                    dead_time=parse_dead_time(tokens[-3]),
+                )
+            )
         return records
 
     # ---------------------------------------------------------- state machine
@@ -244,7 +281,12 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             if _LS_START.match(line):
                 close()
                 age = _LS_AGE.match(line)
-                cur = _Lsa(area=area, process=process, vrf=vrf, age=int(age.group(1)) if age else None)
+                cur = _Lsa(
+                    area=area,
+                    process=process,
+                    vrf=vrf,
+                    age=int(age.group(1)) if age else None,
+                )
                 continue
             if cur is None:
                 continue
@@ -259,8 +301,13 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             elif _ASBR_LINE.match(line):
                 cur.asbr = True
             elif m := _ROUTER_FLAGS.match(line):
-                bits = int(m.group(1), 16)  # RFC 2328 A.4.2: B = 0x01 (ABR), E = 0x02 (ASBR)
-                cur.abr, cur.asbr = cur.abr or bool(bits & 0x01), cur.asbr or bool(bits & 0x02)
+                bits = int(
+                    m.group(1), 16
+                )  # RFC 2328 A.4.2: B = 0x01 (ABR), E = 0x02 (ASBR)
+                cur.abr, cur.asbr = (
+                    cur.abr or bool(bits & 0x01),
+                    cur.asbr or bool(bits & 0x02),
+                )
             elif m := _ADV.match(line):
                 cur.adv = m.group(1)
             elif m := _LINK.match(line):
@@ -271,7 +318,9 @@ class CiscoStyleTextAdapter(LsdbAdapter):
             elif link is not None and (m := _LINK_ID.match(line)):
                 link.link_id = m.group(1)
             elif link is not None and (m := _LINK_DATA.match(line)):
-                link.link_data = m.group(1)  # own interface address; for stubs the network mask
+                link.link_data = m.group(
+                    1
+                )  # own interface address; for stubs the network mask
             elif link is not None and (m := _METRIC.match(line)):
                 link.metric = int(m.group(1))
             elif m := _MASK.match(line):

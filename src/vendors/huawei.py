@@ -19,7 +19,6 @@ import re
 from dataclasses import dataclass, field
 
 from src.vendors.base import (
-    UNKNOWN_AREA,
     LinkRecord,
     Lsdb,
     LsdbAdapter,
@@ -43,7 +42,9 @@ _TYPE = re.compile(r"^\s*Type\s*:\s*(\S+)", re.IGNORECASE)
 _LS_ID = re.compile(rf"^\s*Ls\s+id\s*:\s*({_IP})", re.IGNORECASE)
 _AGE = re.compile(r"^\s*Ls\s+age\s*:\s*(\d+)", re.IGNORECASE)
 _OPTIONS = re.compile(r"^\s*Options\s*:\s*(.*)$", re.IGNORECASE)
-_PEER_ROW = re.compile(rf"^\s*({_IP})\s+(\S+)\s+({_IP})\s+(\S+)\s*$")  # area, interface, neighbor id, state
+_PEER_ROW = re.compile(
+    rf"^\s*({_IP})\s+(\S+)\s+({_IP})\s+(\S+)\s*$"
+)  # area, interface, neighbor id, state
 _SEQ = re.compile(r"^\s*seq#\s*:\s*(\S+)", re.IGNORECASE)
 _ADV = re.compile(rf"Adv\s+rtr\s*:\s*({_IP})", re.IGNORECASE)
 _LINK_ID = re.compile(rf"^\s*\*?\s*Link\s+ID\s*:\s*({_IP})", re.IGNORECASE)
@@ -82,14 +83,22 @@ class HuaweiAdapter(LsdbAdapter):
         routers, procs_r, own_r = self._scan(raw_router)
         networks, procs_n, _own_n = self._scan(raw_network)
         lsdb.process_ids = sorted(procs_r | procs_n)
-        lsdb.router_id = next((rid for proc, rid in own_r if process_id is None or proc == process_id), None)
+        lsdb.router_id = next(
+            (rid for proc, rid in own_r if process_id is None or proc == process_id),
+            None,
+        )
 
         for lsa in routers:
             if lsa.lsa_type.lower() == "router" and self._wanted(lsa, process_id):
                 lsdb.router_lsas.append(
                     RouterLsa(
-                        router_id=lsa.adv or lsa.lsa_id, area=lsa.area, links=lsa.links, seq=lsa.seq,
-                        age=lsa.age, abr=lsa.abr, asbr=lsa.asbr
+                        router_id=lsa.adv or lsa.lsa_id,
+                        area=lsa.area,
+                        links=lsa.links,
+                        seq=lsa.seq,
+                        age=lsa.age,
+                        abr=lsa.abr,
+                        asbr=lsa.asbr,
                     )
                 )
         for lsa in networks:
@@ -111,14 +120,23 @@ class HuaweiAdapter(LsdbAdapter):
         """``display ospf peer brief``: ``Area Id  Interface  Neighbor id  State`` (no DR/BDR role is printed)."""
         records, process = [], None
         for line in (raw or "").splitlines():
-            if (m := _PROCESS.search(line)):
+            if m := _PROCESS.search(line):
                 process = m.group(1)
                 continue
-            if (m := _PEER_ROW.match(line)) and (process_id is None or process in (None, process_id)):
+            if (m := _PEER_ROW.match(line)) and (
+                process_id is None or process in (None, process_id)
+            ):
                 area, interface, router_id, state_text = m.groups()
                 state, role = normalize_state(state_text)
-                records.append(NeighborRecord(router_id=router_id, state=state, role=role,
-                                              interface=interface, area=area))
+                records.append(
+                    NeighborRecord(
+                        router_id=router_id,
+                        state=state,
+                        role=role,
+                        interface=interface,
+                        area=area,
+                    )
+                )
         return records
 
     @staticmethod
@@ -130,7 +148,9 @@ class HuaweiAdapter(LsdbAdapter):
         """Single pass over the text; returns all LSAs found and the process IDs seen."""
         lsas: list[_Lsa] = []
         processes: set[str] = set()
-        own_ids: list[tuple[str, str]] = []  # (process, router ID) from the banner lines
+        own_ids: list[
+            tuple[str, str]
+        ] = []  # (process, router ID) from the banner lines
         process: str | None = None
         area = DEFAULT_AREA
         cur: _Lsa | None = None
@@ -158,9 +178,9 @@ class HuaweiAdapter(LsdbAdapter):
                 # 'Adv rtr' is sometimes glued onto the same line in copy-pasted output
             if m := _ADV.search(line):
                 cur.adv = m.group(1)
-            if (m := _SEQ.match(line)):
+            if m := _SEQ.match(line):
                 cur.seq = parse_seq(m.group(1))
-            if (m := _AGE.match(line)):
+            if m := _AGE.match(line):
                 cur.age = int(m.group(1))
             if (m := _OPTIONS.match(line)) and cur.lsa_type.lower() == "router":
                 words = set(m.group(1).upper().split())

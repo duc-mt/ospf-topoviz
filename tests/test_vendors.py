@@ -86,7 +86,7 @@ def test_arista_non_default_vrf_is_skipped():
 def test_arista_summary_view_fails_loudly_with_hint():
     """If the router command returns links without metrics, say so instead of guessing costs."""
     router, network = load("arista_eos")
-    stripped = "\n".join(l for l in router.splitlines() if "TOS 0" not in l)
+    stripped = "\n".join(line for line in router.splitlines() if "TOS 0" not in line)
     with pytest.raises(ParserError, match="detail"):
         OSPFParser("arista_eos").parse(stripped, network)
 
@@ -157,13 +157,13 @@ def test_xr_and_nxos_genie_schema_is_walked(device_type, router_fx, network_fx):
     assert len(lsdb.router_lsas) == _count_default_vrf(router, 1) > 0
     assert len(lsdb.network_lsas) == _count_default_vrf(network, 2) > 0
     # (The fixtures keep their point-to-point links in VRF1, which is correctly skipped.)
-    kinds = {l.kind for r in lsdb.router_lsas for l in r.links}
+    kinds = {link.kind for r in lsdb.router_lsas for link in r.links}
     assert {"transit", "stub"} <= kinds
     assert all(
-        isinstance(l.metric, int)
+        isinstance(link.metric, int)
         for r in lsdb.router_lsas
-        for l in r.links
-        if l.kind != "stub"
+        for link in r.links
+        if link.kind != "stub"
     )
     assert all(n.attached for n in lsdb.network_lsas)
 

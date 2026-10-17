@@ -23,7 +23,7 @@ fi
 # 2. Check and bootstrap virtual environment if missing
 if [ ! -f "$VENV_PYTHON" ]; then
     echo "Virtual environment not found in .venv. Initializing..."
-    
+
     PYTHON_CMD=""
     if command -v python3 >/dev/null 2>&1; then
         PYTHON_CMD="python3"
@@ -35,7 +35,7 @@ if [ ! -f "$VENV_PYTHON" ]; then
     fi
 
     "$PYTHON_CMD" -m venv "$VENV_DIR"
-    
+
     if [ -f "$SCRIPT_DIR/requirements.lock" ]; then
         echo "Installing locked dependencies..."
         "$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.lock"

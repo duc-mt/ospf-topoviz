@@ -14,11 +14,14 @@ Notes:         Requires Python 3.8+
 
 from __future__ import annotations
 
+import re
+
 import networkx as nx
 import pytest
 
 from src.graph_engine import TopologyDiff
 from src.visualizer import (
+    VisualOptions,
     COLOR_ADDED,
     COLOR_CHANGED,
     COLOR_REMOVED,
@@ -220,9 +223,6 @@ def test_attachment_edges_have_no_metric_label():
 # ======================================================================================
 # Drawing improvements: one line per link, per-end labels, layout, clusters, options
 # ======================================================================================
-import re
-
-from src.visualizer import VisualOptions
 
 
 def _p2p_graph(fwd: int, back: int, addr: bool = False) -> nx.DiGraph:
@@ -319,15 +319,17 @@ def test_interface_addresses_can_be_switched_off():
 
 # --------------------------------------------------------------- diff on merged lines
 def test_removed_link_is_one_dashed_red_line_even_though_two_directions_were_removed():
-    record = lambda s, t: {
-        "source": s,
-        "target": t,
-        "source_label": s,
-        "target_label": t,
-        "metric": 10,
-        "link_type": "point-to-point",
-        "area": "0.0.0.0",
-    }
+    def record(s, t):
+        return {
+            "source": s,
+            "target": t,
+            "source_label": s,
+            "target_label": t,
+            "metric": 10,
+            "link_type": "point-to-point",
+            "area": "0.0.0.0",
+        }
+
     g = nx.DiGraph()
     g.add_node("10.0.0.1", type="router", resolved=True, areas=["0.0.0.0"])
     diff = TopologyDiff(
@@ -339,7 +341,7 @@ def test_removed_link_is_one_dashed_red_line_even_though_two_directions_were_rem
     )
     src = _src(g, diff)
     assert src.count("--") == 1
-    edge_line = next(l for l in src.splitlines() if "--" in l)
+    edge_line = next(line for line in src.splitlines() if "--" in line)
     assert COLOR_REMOVED in edge_line and "dashed" in edge_line
 
 
@@ -357,7 +359,7 @@ def test_metric_change_in_one_direction_marks_the_whole_line_orange():
         TopologyDiff(baseline_available=True, changed_metrics=[change]),
         show_interfaces=False,
     )
-    edge_line = next(l for l in src.splitlines() if "--" in l)
+    edge_line = next(line for line in src.splitlines() if "--" in line)
     assert (
         COLOR_CHANGED in edge_line
         and "10\u2192100" in edge_line
@@ -390,7 +392,8 @@ def _penwidths(src: str) -> list[float]:
     return [
         float(m)
         for m in re.findall(
-            r"penwidth=([\d.]+)", " ".join(l for l in src.splitlines() if "--" in l)
+            r"penwidth=([\d.]+)",
+            " ".join(line for line in src.splitlines() if "--" in line),
         )
     ]
 
@@ -464,7 +467,9 @@ def test_unresolved_node_is_dashed_not_a_diff_colour():
     g = nx.DiGraph()
     g.add_node("10.0.0.1", type="router", resolved=False, areas=["0.0.0.0"])
     node_line = next(
-        l for l in _src(g).splitlines() if '"10.0.0.1"' in l or "10.0.0.1 [" in l
+        line
+        for line in _src(g).splitlines()
+        if '"10.0.0.1"' in line or "10.0.0.1 [" in line
     )
     assert "dashed" in node_line and COLOR_REMOVED not in node_line
 
@@ -505,7 +510,7 @@ def _attachment_record(removed: bool = True) -> dict:
 
 
 def _only_edge_line(src: str) -> str:
-    (line,) = [l for l in src.splitlines() if "--" in l]
+    (line,) = [x for x in src.splitlines() if "--" in x]
     return line
 
 

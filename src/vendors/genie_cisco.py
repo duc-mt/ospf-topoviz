@@ -37,7 +37,9 @@ from src.vendors.base import (
 logger = logging.getLogger(__name__)
 
 
-_HEADER_RID = re.compile(r"OSPF Router with ID\s*\(([\d.]+)\)(?:\s*\(Process ID\s*(\S+?)[\s)])?")
+_HEADER_RID = re.compile(
+    r"OSPF Router with ID\s*\(([\d.]+)\)(?:\s*\(Process ID\s*(\S+?)[\s)])?"
+)
 
 LSA_TYPE_ROUTER = 1
 LSA_TYPE_NETWORK = 2
@@ -77,7 +79,11 @@ class GenieCiscoAdapter(LsdbAdapter):
             ) from exc
         self._router_parser = getattr(parsers, router_cls)
         self._network_parser = getattr(parsers, network_cls)
-        self._neighbor_parser = getattr(importlib.import_module(neighbor[0]), neighbor[1]) if neighbor else None
+        self._neighbor_parser = (
+            getattr(importlib.import_module(neighbor[0]), neighbor[1])
+            if neighbor
+            else None
+        )
         self.route_format = route_format
         self._empty_exc = SchemaEmptyParserError
 
@@ -120,7 +126,9 @@ class GenieCiscoAdapter(LsdbAdapter):
                 return rid
         return headers[0][0] if headers else None
 
-    def parse_neighbors(self, raw: str, process_id: str | None) -> list[NeighborRecord] | None:
+    def parse_neighbors(
+        self, raw: str, process_id: str | None
+    ) -> list[NeighborRecord] | None:
         if self._neighbor_parser is None:
             return None
         if not raw or not raw.strip():
@@ -130,29 +138,39 @@ class GenieCiscoAdapter(LsdbAdapter):
         except self._empty_exc:
             return []
         except Exception as exc:
-            raise ParserError(f"Genie failed to parse the neighbour table: {exc!r}") from exc
+            raise ParserError(
+                f"Genie failed to parse the neighbour table: {exc!r}"
+            ) from exc
 
         records: list[NeighborRecord] = []
-        for interface, block in (data.get("interfaces") or {}).items():  # IOS / IOS-XE layout
+        for interface, block in (
+            data.get("interfaces") or {}
+        ).items():  # IOS / IOS-XE layout
             for rid, nbr in (block.get("neighbors") or {}).items():
                 records.append(self._neighbor(rid, nbr, interface))
         vrfs = data.get("vrfs") or {}  # IOS-XR layout
-        for vrf in ([vrfs["default"]] if "default" in vrfs else list(vrfs.values())):
+        for vrf in [vrfs["default"]] if "default" in vrfs else list(vrfs.values()):
             for rid, nbr in (vrf.get("neighbors") or {}).items():
                 records.append(self._neighbor(rid, nbr, nbr.get("interface")))
-        records.extend(self._nxos_neighbors(data.get("vrf") or {}, process_id))  # NX-OS layout
+        records.extend(
+            self._nxos_neighbors(data.get("vrf") or {}, process_id)
+        )  # NX-OS layout
         return records
 
-    def _nxos_neighbors(self, vrfs: dict, process_id: str | None) -> list[NeighborRecord]:
+    def _nxos_neighbors(
+        self, vrfs: dict, process_id: str | None
+    ) -> list[NeighborRecord]:
         """NX-OS ``show ip ospf neighbors detail``: vrf > address family > instance > area > interface > neighbour."""
         records = []
-        for vrf in ([vrfs["default"]] if "default" in vrfs else list(vrfs.values())):
+        for vrf in [vrfs["default"]] if "default" in vrfs else list(vrfs.values()):
             for family in (vrf.get("address_family") or {}).values():
                 for instance, inst in (family.get("instance") or {}).items():
                     if process_id is not None and str(instance) != process_id:
                         continue
                     for area, area_data in (inst.get("areas") or {}).items():
-                        for interface, block in (area_data.get("interfaces") or {}).items():
+                        for interface, block in (
+                            area_data.get("interfaces") or {}
+                        ).items():
                             for rid, nbr in (block.get("neighbors") or {}).items():
                                 record = self._neighbor(rid, nbr, interface)
                                 record.area = str(area)
@@ -163,13 +181,22 @@ class GenieCiscoAdapter(LsdbAdapter):
     def _neighbor(router_id: str, nbr: dict, interface: str | None) -> NeighborRecord:
         state, role = normalize_state(nbr.get("state", ""))
         address = str(nbr["address"]) if nbr.get("address") else None
-        if role is None and nbr.get("dr_ip_addr") is not None:  # NX-OS detail names the DR/BDR instead
+        if (
+            role is None and nbr.get("dr_ip_addr") is not None
+        ):  # NX-OS detail names the DR/BDR instead
             role = role_from_dr(address, nbr.get("dr_ip_addr"), nbr.get("bdr_ip_addr"))
         priority = nbr.get("priority")
-        return NeighborRecord(router_id=str(router_id), state=state, role=role,
-                              interface=str(interface) if interface else None, address=address,
-                              priority=int(priority) if priority is not None and str(priority).isdigit() else None,
-                              dead_time=parse_dead_time(nbr.get("dead_time") or nbr.get("dead_timer")))
+        return NeighborRecord(
+            router_id=str(router_id),
+            state=state,
+            role=role,
+            interface=str(interface) if interface else None,
+            address=address,
+            priority=int(priority)
+            if priority is not None and str(priority).isdigit()
+            else None,
+            dead_time=parse_dead_time(nbr.get("dead_time") or nbr.get("dead_timer")),
+        )
 
     # ---------------------------------------------------------------- walking
     def from_genie(
@@ -255,9 +282,14 @@ class GenieCiscoAdapter(LsdbAdapter):
 
     def _router_lsa(self, area: str, lsa: dict[str, Any]) -> RouterLsa:
         header = self._header(lsa)
-        router = RouterLsa(router_id=str(lsa.get("adv_router") or lsa.get("lsa_id")), area=area, seq=self._seq(lsa),
-                           age=self._age(lsa), abr=bool(header.get("area_border_router")),
-                           asbr=bool(header.get("as_boundary_router")))
+        router = RouterLsa(
+            router_id=str(lsa.get("adv_router") or lsa.get("lsa_id")),
+            area=area,
+            seq=self._seq(lsa),
+            age=self._age(lsa),
+            abr=bool(header.get("area_border_router")),
+            asbr=bool(header.get("as_boundary_router")),
+        )
         links = (((lsa.get("ospfv2") or {}).get("body") or {}).get("router") or {}).get(
             "links"
         ) or {}
@@ -271,7 +303,9 @@ class GenieCiscoAdapter(LsdbAdapter):
                 )
                 continue
             metric = self._metric(link)  # for a stub: the cost of the advertised prefix
-            link_data = str(link.get("link_data")) if link.get("link_data") else None  # stub: its mask
+            link_data = (
+                str(link.get("link_data")) if link.get("link_data") else None
+            )  # stub: its mask
             router.links.append(
                 LinkRecord(
                     kind=kind,

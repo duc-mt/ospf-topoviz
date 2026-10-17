@@ -27,7 +27,7 @@ if not exist "%SCRIPT_DIR%config\settings.yaml" (
 REM 2. Check and bootstrap virtual environment if missing
 if not exist "%VENV_PYTHON%" (
     echo Virtual environment not found in .venv. Initializing...
-    
+
     where python >nul 2>nul
     if !ERRORLEVEL! neq 0 (
         echo Error: Python 3 is not installed or not found in PATH.

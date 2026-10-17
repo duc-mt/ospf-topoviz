@@ -175,10 +175,14 @@ class DevicePoller(BasePoller):
         try:
             self.priority = int(device.get("priority", 1))
         except (TypeError, ValueError) as exc:
-            raise ConfigError(f"{self.config_path}: seed {self.host}: priority must be an integer ({exc})") from exc
+            raise ConfigError(
+                f"{self.config_path}: seed {self.host}: priority must be an integer ({exc})"
+            ) from exc
         self.tags: tuple[str, ...] = tuple(str(t) for t in (device.get("tags") or ()))
         self.device_type = str(device_type or device.get("device_type", "cisco_ios"))
-        self.process_id = parse_process_id(device.get("ospf_process_id") or settings.get("ospf_process_id"))
+        self.process_id = parse_process_id(
+            device.get("ospf_process_id") or settings.get("ospf_process_id")
+        )
         self.profile: VendorProfile = get_profile(self.device_type)
         self._username = str(device["username"])
         self._password = str(device["password"])
@@ -193,10 +197,18 @@ class DevicePoller(BasePoller):
             which: self.profile.command(which, self.process_id, overrides.get(which))
             for which in ("router", "network")
         }
-        if collect_neighbors and (self.profile.neighbors is not None or overrides.get("neighbors")):
-            self.commands["neighbors"] = self.profile.command("neighbors", self.process_id, overrides.get("neighbors"))
-        if collect_routes and (self.profile.routes is not None or overrides.get("routes")):
-            self.commands["routes"] = self.profile.command("routes", self.process_id, overrides.get("routes"))
+        if collect_neighbors and (
+            self.profile.neighbors is not None or overrides.get("neighbors")
+        ):
+            self.commands["neighbors"] = self.profile.command(
+                "neighbors", self.process_id, overrides.get("neighbors")
+            )
+        if collect_routes and (
+            self.profile.routes is not None or overrides.get("routes")
+        ):
+            self.commands["routes"] = self.profile.command(
+                "routes", self.process_id, overrides.get("routes")
+            )
 
     @classmethod
     def from_settings(
@@ -213,7 +225,9 @@ class DevicePoller(BasePoller):
         """
         if settings is None:
             settings = load_settings(config_path)
-        entries = device_entries(settings, str(config_path), hosts=hosts, device_type=device_type)
+        entries = device_entries(
+            settings, str(config_path), hosts=hosts, device_type=device_type
+        )
         polling = PollingOptions.from_settings(settings.get("polling"))
         return [
             cls(
@@ -295,8 +309,19 @@ class DevicePoller(BasePoller):
             return ""
         try:
             return self._run(conn, key, allow_empty=True)
-        except (PollerError, NetmikoBaseException, ReadTimeout, SSHException, OSError) as exc:
-            logger.warning("%s: could not read the %s (%s); continuing without it", self.host, what, _first_line(exc))
+        except (
+            PollerError,
+            NetmikoBaseException,
+            ReadTimeout,
+            SSHException,
+            OSError,
+        ) as exc:
+            logger.warning(
+                "%s: could not read the %s (%s); continuing without it",
+                self.host,
+                what,
+                _first_line(exc),
+            )
             return ""
 
     def _run(self, conn: Any, key: str, allow_empty: bool = False) -> str:
@@ -381,7 +406,9 @@ class PollingOptions:
     """Settings for multi-router polling."""
 
     concurrency: int = 4  # routers polled at the same time
-    require_all: bool = False  # abort the run if ANY router fails (default: carry on with the rest)
+    require_all: bool = (
+        False  # abort the run if ANY router fails (default: carry on with the rest)
+    )
     neighbors: bool = True  # also read each router's neighbour table (adjacency state, interface names)
     routes: bool = True  # also read each router's OSPF routing table (to check it against the LSDB)
 
@@ -400,7 +427,9 @@ class PollingOptions:
                 routes=bool(section.get("routes", True)),
             )
         except (TypeError, ValueError) as exc:
-            raise ConfigError(f"polling.concurrency must be an integer ({exc})") from exc
+            raise ConfigError(
+                f"polling.concurrency must be an integer ({exc})"
+            ) from exc
         if options.concurrency < 1:
             raise ConfigError("polling.concurrency must be 1 or greater")
         return options
@@ -463,7 +492,10 @@ class PollResult:
 
     def failure_report(self) -> str:
         """One line per failed seed, for error messages."""
-        return "; ".join(f"{s.host}: {s.error or s.status}" for s in self.failed) or "no seed answered"
+        return (
+            "; ".join(f"{s.host}: {s.error or s.status}" for s in self.failed)
+            or "no seed answered"
+        )
 
 
 class MultiDevicePoller:
@@ -507,7 +539,9 @@ class MultiDevicePoller:
             raise ConfigError(f"Unknown seed mode {mode!r}: use 'merge' or 'fallback'")
         if concurrency < 1:
             raise ConfigError("concurrency must be 1 or greater")
-        self.pollers = sorted(pollers, key=lambda p: getattr(p, "priority", 0))  # stable for equal priorities
+        self.pollers = sorted(
+            pollers, key=lambda p: getattr(p, "priority", 0)
+        )  # stable for equal priorities
         self.mode = mode
         self.concurrency = concurrency
         self.ingest = ingest
@@ -527,7 +561,9 @@ class MultiDevicePoller:
         if settings is None:
             settings = load_settings(config_path)
         options = SeedsOptions.from_settings(settings, mode=mode)
-        pollers = DevicePoller.from_settings(config_path, device_type=device_type, settings=settings, hosts=hosts)
+        pollers = DevicePoller.from_settings(
+            config_path, device_type=device_type, settings=settings, hosts=hosts
+        )
         return cls(
             pollers,
             mode=options.mode,
@@ -561,17 +597,24 @@ class MultiDevicePoller:
             result.duration = duration
             if error is None and self._accept(poller, result, raw):
                 if len(results) > 1:
-                    logger.info("Seed %s answered; the remaining seeds are not needed", result.host)
+                    logger.info(
+                        "Seed %s answered; the remaining seeds are not needed",
+                        result.host,
+                    )
                 return
             if error is not None:
                 self._fail(result, error)
 
     def _poll_merge(self, results: list[SeedResult]) -> None:
         workers = max(1, min(self.concurrency, len(self.pollers)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix="seed") as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="seed"
+        ) as pool:
             futures = [pool.submit(self._attempt, p) for p in self.pollers]
             outcomes = [f.result() for f in futures]  # _attempt never raises
-        for poller, result, (raw, error, duration) in zip(self.pollers, results, outcomes):
+        for poller, result, (raw, error, duration) in zip(
+            self.pollers, results, outcomes
+        ):
             result.duration = duration
             if error is not None:
                 self._fail(result, error)
@@ -597,7 +640,10 @@ class MultiDevicePoller:
                 result.parsed = self.ingest(poller, raw)
             except TrackerError as exc:
                 result.raw = raw  # keep it: it is exactly what --save-raw is for when the parser chokes
-                self._fail(result, PollerError(f"could not use the output of {result.host}: {exc}"))
+                self._fail(
+                    result,
+                    PollerError(f"could not use the output of {result.host}: {exc}"),
+                )
                 return False
         result.raw = raw
         result.status = STATUS_OK
@@ -616,5 +662,11 @@ class MultiDevicePoller:
             logger.warning("Seed %s failed (%s): %s", result.host, result.status, error)
         else:  # a bug or an exception we do not know: keep the traceback
             result.error = f"unexpected {type(error).__name__}: {error}"
-            logger.warning("Seed %s failed (%s): %s", result.host, result.status, result.error, exc_info=error)
+            logger.warning(
+                "Seed %s failed (%s): %s",
+                result.host,
+                result.status,
+                result.error,
+                exc_info=error,
+            )
         result.parsed = None
