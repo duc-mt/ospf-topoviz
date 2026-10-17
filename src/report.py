@@ -575,6 +575,58 @@ def finding_counts(diff) -> dict[str, int]:
     return counts
 
 
+def render_area_coverage(diff) -> str | None:
+    """Area Coverage Summary: which OSPF areas were polled and which have no seed.
+
+    Reports per *area*, not per router: a missing area is one line plus where to look for a seed (the
+    ABR that borders it, the neighbour inside it). Returns ``None`` when there is nothing to say - a
+    single area that was read in full - so callers can print the result only if it is not ``None``.
+    """
+    cov = getattr(diff, "area_coverage", None)
+    if not cov:
+        return None
+    polled = cov.get("polled") or []
+    missing = cov.get("missing") or []
+    if missing:
+        head = colorize("[WARN] INCOMPLETE AREA COVERAGE:", ANSI_YELLOW)
+    elif len(polled) > 1:
+        head = colorize("[ OK ] AREA COVERAGE:", ANSI_GREEN)
+    else:
+        return None
+    lines = [head]
+    for entry in polled:
+        seeds = entry.get("seeds") or []
+        via = (
+            f"polled via seed{'s' if len(seeds) > 1 else ''} {', '.join(seeds)}"
+            if seeds
+            else "polled"
+        )
+        lines.append(
+            f"- Area {entry['area']}: " + colorize("OK", ANSI_GREEN) + f" ({via})"
+        )
+    for miss in missing:
+        area = miss.get("area")
+        label = f"Area {area}" if area else "Area (ID not visible)"
+        lines.append(f"- {label}: " + colorize("MISSING SEED!", ANSI_RED))
+        lines += [f"  -> {_clip(ev, 150)}" for ev in (miss.get("evidence") or [])[:3]]
+        cands = miss.get("candidates") or []
+        e_g = f" (e.g. {' or '.join(cands[:2])} or an internal router)" if cands else ""
+        where = f"Area {area}" if area else "the area behind that ABR"
+        lines.append(
+            f"  -> Action: Add at least ONE router in {where}{e_g} to settings.yaml "
+            "to render this area's full topology."
+        )
+    return "\n".join(lines)
+
+
+def _area_badge(diff) -> str:
+    """``│ ⚠ Areas: 1 unpolled`` when some OSPF area has no seed, else nothing."""
+    missing = (getattr(diff, "area_coverage", None) or {}).get("missing") or []
+    if not missing:
+        return ""
+    return "  │  " + colorize(f"⚠ Areas: {len(missing)} unpolled", ANSI_YELLOW)
+
+
 def render_trace(trace, graph) -> str:
     """Prefix path lookup: the router's RIB entry, then the LSDB shortest path hop by hop."""
     from src.graph_engine import display_name
@@ -713,6 +765,7 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
             status_badge = colorize("✔ Stable Topology", ANSI_GREEN)
         return (
             f"  {status_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+            + _area_badge(diff)
             + _findings_badge(diff)
         )
 
@@ -731,4 +784,4 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
     )
     if diff.suspect_reasons:
         line += "  │  " + colorize("✖ Suspect Run", ANSI_RED)
-    return line + _findings_badge(diff)
+    return line + _area_badge(diff) + _findings_badge(diff)

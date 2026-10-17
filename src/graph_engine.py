@@ -92,10 +92,14 @@ class TopologyDiff:
     #: False when the guard kept the previous baseline instead of saving this run.
     baseline_updated: bool = True
     #: Cross-check results (``correlation.Finding.to_dict()``): LSDB vs neighbour state, neighbour flaps,
-    #: SPF vs routing table. Empty when no neighbour/routing data was collected.
+    #: SPF vs routing table. Empty when no neighbour/routing data was collected - except the area coverage
+    #: findings (``AREA_UNPOLLED``), which need nothing but the topology.
     findings: list[dict] = field(default_factory=list)
     #: Per polled router: how many routing-table entries were seen, checked and found consistent.
     rib_checks: list[dict] = field(default_factory=list)
+    #: Which OSPF areas the seeds covered and which nobody read (``correlation.AreaCoverage.to_dict()``);
+    #: ``None`` only when the diff was not produced by ``GraphEngine.process``.
+    area_coverage: dict[str, Any] | None = None
 
     @property
     def has_changes(self) -> bool:
@@ -356,6 +360,7 @@ class GraphEngine:
         dry_run: bool = False,
         partial_sources: Sequence[str] = (),
         details: Sequence[SourceDetail] = (),
+        seeds: Sequence[Any] = (),
     ) -> tuple[nx.DiGraph, TopologyDiff]:
         """Build the graph, diff it against the baseline and (if trustworthy) save it.
 
@@ -366,6 +371,8 @@ class GraphEngine:
             partial_sources: Seed routers that failed to answer; see ``assess``.
             details: What each polled router reported besides the LSDB (neighbour table, routing table);
                 cross-checked against the topology into ``diff.findings`` (see ``correlation``).
+            seeds: ``poller.SeedResult``-like objects (``host``, ``status``, ``tags``); optional, lets the
+                area coverage audit name the seed behind each area (see ``correlation.audit_area_coverage``).
 
         Returns:
             ``(graph, diff)``. ``diff.suspect_reasons`` / ``diff.baseline_updated`` tell
@@ -379,10 +386,11 @@ class GraphEngine:
             )  # crash recovery / first run after rotation
         diff = self.compare(baseline, graph)
         diff.suspect_reasons = self.assess(baseline, graph, partial_sources)
-        if details:
-            report = correlate(graph, details, baseline)
-            diff.findings = [f.to_dict() for f in report.findings]
-            diff.rib_checks = report.rib_checks
+        report = correlate(graph, details, baseline, seeds)
+        diff.findings = [f.to_dict() for f in report.findings]
+        diff.rib_checks = report.rib_checks
+        if report.area_coverage is not None:
+            diff.area_coverage = report.area_coverage.to_dict()
 
         if dry_run:
             diff.baseline_updated = False

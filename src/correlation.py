@@ -30,6 +30,7 @@ from __future__ import annotations
 import heapq
 import ipaddress
 import logging
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -40,6 +41,7 @@ from src import node_sort_key
 from src.vendors.base import (
     INTERNAL_ROUTE_TYPES,
     ROUTE_INTRA,
+    UNKNOWN_AREA,
     OSPFRoute,
     SourceDetail,
     state_severity,
@@ -75,6 +77,7 @@ NEXTHOP_MISMATCH = (
 )
 ECMP_MISSING = "ECMP_MISSING"  # LSDB has more equal-cost paths than the RIB installed
 RIB_EMPTY = "RIB_EMPTY"  # routing table collected but empty
+AREA_UNPOLLED = "AREA_UNPOLLED"  # an OSPF area exists that no seed router covers (its part of the map is missing)
 
 NEIGHBOR_KINDS = (
     ADJ_NOT_FULL,
@@ -134,6 +137,8 @@ class CorrelationReport:
     findings: list[Finding] = field(default_factory=list)
     #: One entry per polled router whose routing table was checked: counts of routes seen / verified / ok.
     rib_checks: list[dict[str, Any]] = field(default_factory=list)
+    #: Which OSPF areas were polled and which were not (see ``audit_area_coverage``); always set by ``correlate``.
+    area_coverage: AreaCoverage | None = None
 
 
 # ====================================================================== SPF
@@ -780,11 +785,294 @@ def route_findings(
     return findings, check
 
 
+# ============================================================ area coverage
+_AREA_TAG = re.compile(r"^area\s*([0-9][0-9.]*)$", re.IGNORECASE)
+#: How many candidate seed routers are named per missing area (the best ones first).
+MAX_CANDIDATES = 4
+
+
+def area_key(area: Any) -> str:
+    """Canonical spelling of an area ID: ``"0"`` and ``"0.0.0.0"`` are the same area."""
+    text = str(area).strip()
+    if text.isdigit():
+        try:
+            return str(ipaddress.IPv4Address(int(text)))
+        except ValueError:
+            pass
+    return text
+
+
+def _real_area(area: Any) -> str | None:
+    """The canonical area ID, or ``None`` for an empty / platform-did-not-say value."""
+    text = area_key(area) if area is not None else ""
+    return None if text in ("", UNKNOWN_AREA, "None") else text
+
+
+@dataclass
+class MissingArea:
+    """An area that exists but that no seed router covers, with where to look for a seed."""
+
+    #: The area ID, or ``None`` when an area clearly exists behind an ABR but nothing says which one.
+    area: str | None
+    #: Why we think it exists (one sentence each).
+    evidence: list[str] = field(default_factory=list)
+    #: Router IDs worth adding as a seed, best first.
+    candidates: list[str] = field(default_factory=list)
+
+    @property
+    def named(self) -> bool:
+        return self.area is not None
+
+
+@dataclass
+class AreaCoverage:
+    """Which OSPF areas the polled seeds cover, and which they do not."""
+
+    #: Polled area -> the seed routers that read it (empty when the seeds are not known by name).
+    polled: dict[str, list[str]] = field(default_factory=dict)
+    missing: list[MissingArea] = field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "complete": self.complete,
+            "polled": [
+                {"area": a, "seeds": list(self.polled[a])}
+                for a in sorted(self.polled, key=node_sort_key)
+            ],
+            "missing": [asdict(m) | {"named": m.named} for m in self.missing],
+        }
+
+    def findings(self) -> list[Finding]:
+        """One ``AREA_UNPOLLED`` finding per missing area.
+
+        A *named* area (its ID is known) is a warning: part of the map is missing. An area known only
+        as "something behind an ABR" is information: it is probably there, but it cannot be named.
+        """
+        out: list[Finding] = []
+        for miss in self.missing:
+            cands = ", ".join(miss.candidates)
+            if miss.named:
+                message = (
+                    f"Area {miss.area} was not polled: no seed router covers it, so its routers "
+                    "and links are missing from the topology"
+                )
+                where = f" (e.g. {cands})" if cands else ""
+                hint = (
+                    f"Add at least one router of area {miss.area}{where} to the seeds in "
+                    "settings.yaml to draw its full topology"
+                )
+            else:
+                message = (
+                    f"At least one more area lies behind ABR {cands or '?'}, but its ID is not "
+                    "visible in the LSAs read, so it was not polled"
+                )
+                hint = (
+                    "Add a router from the far side of the ABR"
+                    + (f" (e.g. {cands})" if cands else "")
+                    + " to the seeds in settings.yaml to draw that area"
+                )
+            out.append(
+                Finding(
+                    category="area",
+                    kind=AREA_UNPOLLED,
+                    severity=WARNING if miss.named else INFO,
+                    router=miss.candidates[0] if miss.candidates else "",
+                    subject=miss.area or "unknown",
+                    message=message,
+                    hint=hint,
+                    data={
+                        "area": miss.area,
+                        "candidates": list(miss.candidates),
+                        "evidence": list(miss.evidence),
+                    },
+                )
+            )
+        return out
+
+
+@dataclass
+class _Seed:
+    name: str
+    router_id: str | None = None
+    ok: bool | None = None  # None = nobody said
+    tags: set[str] = field(default_factory=set)
+
+
+def _tag_areas(tags: Iterable[Any]) -> set[str]:
+    """Areas a seed was labelled with in settings.yaml (``Area0``, ``Area 2``, ``area 0.0.0.1``)."""
+    found = set()
+    for tag in tags or ():
+        m = _AREA_TAG.match(str(tag).strip())
+        if m and (area := _real_area(m.group(1))):
+            found.add(area)
+    return found
+
+
+def _seed_records(
+    graph: nx.DiGraph, details: Iterable[SourceDetail], seeds: Iterable[Any]
+) -> list[_Seed]:
+    """Every seed router we can name, merged from the three places that mention them.
+
+    ``details`` (answered routers), ``graph.graph["sources"]`` (the poll summary stored with the
+    topology) and ``seeds`` (``poller.SeedResult``-like objects or dicts: ``host``, ``status``,
+    ``tags``) overlap; entries with the same name are one seed.
+    """
+    records: dict[str, _Seed] = {}
+
+    def note(name: Any, router_id: Any, ok: bool | None, tags: Iterable[Any]) -> None:
+        if not name:
+            return
+        rec = records.setdefault(str(name), _Seed(str(name)))
+        rec.router_id = rec.router_id or (str(router_id) if router_id else None)
+        if ok is True or (ok is False and rec.ok is None):
+            rec.ok = ok
+        rec.tags |= _tag_areas(tags)
+
+    for d in details:
+        note(d.name, d.router_id, True, ())
+    for src in graph.graph.get("sources") or []:
+        if isinstance(src, dict):
+            status = src.get("status")
+            note(
+                src.get("name"),
+                src.get("router_id"),
+                None if status is None else status == "ok",
+                src.get("tags") or (),
+            )
+    for seed in seeds or ():
+        get = (
+            seed.get
+            if isinstance(seed, dict)
+            else lambda k, _s=seed: getattr(_s, k, None)
+        )
+        status = get("status")
+        skipped = (
+            status == "SKIPPED"
+        )  # fallback mode: never needed, says nothing about coverage
+        note(
+            get("host") or get("name"),
+            get("router_id"),
+            None if status is None or skipped else status == "SUCCEEDED",
+            get("tags") or (),
+        )
+    return list(records.values())
+
+
+def audit_area_coverage(
+    graph: nx.DiGraph,
+    details: Sequence[SourceDetail] = (),
+    seeds: Sequence[Any] = (),
+) -> AreaCoverage:
+    """Report coverage at the level of OSPF *areas*, not individual routers.
+
+    A seed router reads the Type 1/2 LSAs of every area it is attached to, so an area is *polled* when
+    its LSAs are in the graph. An area nobody read leaves no LSAs behind, so it can only be found from
+    side evidence, strongest first:
+
+    * a seed labelled ``Area N`` in settings.yaml that is not in the graph (it failed, or its area was empty);
+    * a neighbour-table row naming an area the graph does not have;
+    * an ABR (B bit set) of which only one area is visible - the border it was flagged for leads
+      somewhere nothing was read. A seed that *is* the ABR read all of its areas, so it does not count.
+
+    Candidate seeds for a missing area are the routers that border it: the neighbour in that area, the
+    seed that should have covered it, then the hidden ABRs.
+    """
+    polled: set[str] = set()
+    for _node, attrs in graph.nodes(data=True):
+        polled |= {a for a in map(_real_area, attrs.get("areas") or []) if a}
+    for _u, _v, attrs in graph.edges(data=True):
+        if area := _real_area(attrs.get("area")):
+            polled.add(area)
+
+    records = _seed_records(graph, details, seeds)
+    answered = {r.router_id for r in records if r.router_id and r.ok is not False}
+    via: dict[str, list[str]] = {a: [] for a in polled}
+    for rec in records:
+        if rec.ok is False or not rec.router_id or rec.router_id not in graph:
+            continue
+        for area in map(_real_area, graph.nodes[rec.router_id].get("areas") or []):
+            if area in via and rec.name not in via[area]:
+                via[area].append(rec.name)
+
+    named: dict[str, MissingArea] = {}
+
+    def want(area: str) -> MissingArea:
+        return named.setdefault(area, MissingArea(area))
+
+    for rec in records:
+        for area in sorted(rec.tags - polled, key=node_sort_key):
+            miss = want(area)
+            miss.evidence.append(
+                f"Seed {rec.name} is labelled Area {area}, "
+                + (
+                    "but it could not be polled."
+                    if rec.ok is False
+                    else "but no LSA of that area was read."
+                )
+            )
+            miss.candidates.append(rec.router_id or rec.name)
+    for detail in details:
+        for nbr in detail.neighbors:
+            area = _real_area(nbr.area)
+            if area and area not in polled:
+                miss = want(area)
+                miss.evidence.append(
+                    f"{detail.router_id or detail.name} has neighbour {nbr.router_id} in area {area}, "
+                    "which no seed covers."
+                )
+                miss.candidates.insert(0, nbr.router_id)
+
+    hidden: list[tuple[str, list[str]]] = []
+    for node, attrs in sorted(
+        graph.nodes(data=True), key=lambda item: node_sort_key(item[0])
+    ):
+        if not attrs.get("abr") or node in answered:
+            continue
+        seen = sorted(
+            {a for a in map(_real_area, attrs.get("areas") or []) if a},
+            key=node_sort_key,
+        )
+        if len(seen) <= 1:
+            hidden.append((node, seen))
+
+    missing: list[MissingArea] = []
+    for area in sorted(named, key=node_sort_key):
+        miss = named[area]
+        for abr, seen in hidden:
+            miss.evidence.append(
+                f"ABR {abr} borders more areas than the one visible here "
+                f"({', '.join(seen) or 'none'}), so it may be the way into area {area}."
+            )
+            miss.candidates.append(abr)
+        miss.candidates = list(dict.fromkeys(miss.candidates))[:MAX_CANDIDATES]
+        missing.append(miss)
+    if hidden and not named:
+        missing.append(
+            MissingArea(
+                None,
+                [
+                    f"ABR {abr} has the border-router bit set but only area "
+                    f"{', '.join(seen) or '?'} is visible on it."
+                    for abr, seen in hidden
+                ],
+                [abr for abr, _seen in hidden][:MAX_CANDIDATES],
+            )
+        )
+    return AreaCoverage(
+        polled={a: via[a] for a in sorted(via, key=node_sort_key)}, missing=missing
+    )
+
+
 # ================================================================ driver
 def correlate(
     graph: nx.DiGraph,
     details: Sequence[SourceDetail] = (),
     previous: nx.DiGraph | None = None,
+    seeds: Sequence[Any] = (),
 ) -> CorrelationReport:
     """Run every cross-check available for the data that was collected.
 
@@ -792,22 +1080,28 @@ def correlate(
         graph: The current topology (from ``GraphEngine.build_graph``).
         details: What each polled router reported beyond the LSDB (neighbour table, routing table).
         previous: The baseline graph; its saved neighbour snapshot is what flaps are measured against.
+        seeds: ``poller.SeedResult``-like objects (``host``, ``status``, ``tags``); lets the area audit
+            name the seed behind each area and notice a seed labelled with an area that was never read.
+
+    The area coverage audit needs nothing but the graph, so it always runs; the other checks need
+    ``details``.
     """
     report = CorrelationReport()
-    if not details:
-        return report
-    index = prefix_origins(graph)
-    resolver = IpResolver(graph, details)
-    for detail in details:
-        report.findings += neighbor_findings(graph, detail)
-        found, check = route_findings(graph, detail, index, resolver)
-        report.findings += found
-        if detail.routes is not None and detail.router_id:
-            report.rib_checks.append(check)
-    if previous is not None:
-        report.findings += flap_findings(
-            graph.graph.get("neighbors") or [], previous.graph.get("neighbors")
-        )
+    report.area_coverage = audit_area_coverage(graph, details, seeds)
+    report.findings += report.area_coverage.findings()
+    if details:
+        index = prefix_origins(graph)
+        resolver = IpResolver(graph, details)
+        for detail in details:
+            report.findings += neighbor_findings(graph, detail)
+            found, check = route_findings(graph, detail, index, resolver)
+            report.findings += found
+            if detail.routes is not None and detail.router_id:
+                report.rib_checks.append(check)
+        if previous is not None:
+            report.findings += flap_findings(
+                graph.graph.get("neighbors") or [], previous.graph.get("neighbors")
+            )
     report.findings.sort(
         key=lambda f: (
             SEVERITY_RANK.get(f.severity, 3),

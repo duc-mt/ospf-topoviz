@@ -19,10 +19,10 @@
 /* Colour tokens. The page sets data-theme="dark" or "light" on <html> (see the script in <head>). */
 [data-theme="dark"]{color-scheme:dark;--bg:#0b1324;--panel:#111b2f;--panel2:#16233b;--line:#22324d;--text:#e6edf7;--strong:#ffffff;--muted:#8da2c0;
 --accent:#3b82f6;--crit:#ef4444;--warn:#f59e0b;--info:#60a5fa;--ok:#22c55e;--dot:#1a2a45;--glass:#0b1324cc;--tip:#0b1324f2;--on:#1e3a66;--hover:#1b2c49;
---shadow:#0009;--c-crit:#fca5a5;--c-warn:#fcd34d;--c-orange:#fdba74;--c-info:#93c5fd;--t-ok:#4ade80;--t-y:#facc15;--t-o:#fb923c;--t-r:#f87171;--logo:#60a5fa}
+--shadow:#0009;--c-crit:#fca5a5;--c-warn:#fcd34d;--c-orange:#fdba74;--c-info:#93c5fd;--t-ok:#4ade80;--t-y:#facc15;--t-o:#fb923c;--t-r:#f87171;--logo:#60a5fa;--sim-bg:#2a2108f2;--sim-path:#38bdf8;--sim-rev:#e879f9}
 [data-theme="light"]{color-scheme:light;--bg:#f8fafc;--panel:#ffffff;--panel2:#f1f5f9;--line:#e2e8f0;--text:#0f172a;--strong:#020617;--muted:#64748b;
 --accent:#2563eb;--crit:#dc2626;--warn:#d97706;--info:#2563eb;--ok:#16a34a;--dot:#cbd5e1;--glass:#f8fafccc;--tip:#fffffff2;--on:#dbeafe;--hover:#e8eef8;
---shadow:#0f172a26;--c-crit:#b91c1c;--c-warn:#b45309;--c-orange:#c2410c;--c-info:#1d4ed8;--t-ok:#15803d;--t-y:#a16207;--t-o:#c2410c;--t-r:#b91c1c;--logo:#2563eb}
+--shadow:#0f172a26;--c-crit:#b91c1c;--c-warn:#b45309;--c-orange:#c2410c;--c-info:#1d4ed8;--t-ok:#15803d;--t-y:#a16207;--t-o:#c2410c;--t-r:#b91c1c;--logo:#2563eb;--sim-bg:#fff7e0f2;--sim-path:#0284c7;--sim-rev:#c026d3}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.45 var(--font);overflow:hidden}
 button,input,select{font:inherit;color:inherit}
@@ -79,7 +79,41 @@ details.group .n{margin-left:auto;color:var(--muted)}
 #sel{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:10px;font-size:12px}
 #sel.hidden{display:none}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-@media print{#side,#top,#bar{display:none}#app{height:100%}}
+/* ---- what-if simulation ---- */
+#b-sim.on{background:var(--warn);border-color:var(--warn);color:#1a1200;font-weight:700}
+#sim-bar{position:absolute;z-index:4;left:14px;right:14px;top:54px;display:none;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:8px 12px;border-radius:12px;background:var(--sim-bg);border:1.5px solid var(--warn);box-shadow:0 8px 28px var(--shadow)}
+#sim-bar.on{display:flex}
+.sim-badge{font-weight:800;letter-spacing:.07em;font-size:11px;padding:3px 10px;border-radius:99px;background:var(--warn);color:#1a1200;white-space:nowrap}
+#sim-bar label{display:flex;gap:5px;align-items:center;color:var(--muted);font-weight:600}
+#sim-bar select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:3px 6px;max-width:170px}
+.sim-metrics{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1;min-width:220px}
+.sim-chip{padding:2px 9px;border-radius:99px;border:1px solid var(--line);background:var(--panel);font-size:12px;white-space:nowrap}
+.sim-chip.bad{color:var(--c-crit);border-color:var(--crit);font-weight:700}
+.sim-chip.warn{color:var(--c-warn);border-color:var(--warn)}
+.sim-chip.ok{color:var(--t-ok);border-color:var(--ok)}
+.sim-chip.rev{color:var(--sim-rev);border-color:var(--sim-rev);font-weight:700}
+.sim-chip.dim{color:var(--muted)}
+.sim-chip.undo{cursor:pointer}.sim-chip.undo:hover{border-color:var(--crit)}
+#sim-diff{flex-basis:100%;display:none;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;color:var(--muted)}
+#sim-diff b{color:var(--strong)}#sim-diff .cut{color:var(--c-crit)}#sim-diff .new{color:var(--sim-path)}
+#sim-changes{flex-basis:100%;display:none;gap:6px;flex-wrap:wrap}
+#sim-pop{position:absolute;z-index:8;display:none;width:262px;background:var(--panel);border:1px solid var(--warn);border-radius:11px;padding:10px 12px;box-shadow:0 12px 36px var(--shadow);font-size:12px}
+#sim-pop h5{margin:0 0 2px;font-size:13px;color:var(--strong)}
+#sim-pop .sub{color:var(--muted);margin-bottom:6px}
+#sim-pop button{display:block;width:100%;text-align:left;margin:4px 0}
+#sim-pop .r2{display:flex;gap:6px;align-items:center;margin:5px 0}
+#sim-pop .r2 button{width:auto;margin:0;flex:0 0 auto}
+#sim-pop input[type=number]{width:74px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 6px}
+#sim-pop select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 6px;max-width:100%}
+#sim-pop .x{position:absolute;right:8px;top:6px;width:auto;border:0;background:transparent;padding:0 4px;margin:0}
+#sim-pop .note{margin-top:6px;padding:6px 8px;border-radius:8px;background:var(--panel2);color:var(--text)}
+#sim-pop .note.bad{color:var(--c-crit)}#sim-pop .note.ok{color:var(--t-ok)}
+#simfx,#simtop{pointer-events:none}
+.sim-path-active,.sim-path-rev{animation:simflow .9s linear infinite}
+.sim-path-rev{animation-direction:normal}
+@keyframes simflow{to{stroke-dashoffset:-19}}
+@media (prefers-reduced-motion:reduce){.sim-path-active,.sim-path-rev{animation:none}}
+@media print{#side,#top,#bar,#sim-bar,#sim-pop{display:none}#app{height:100%}}
 </style>
 </head>
 <body>
@@ -88,6 +122,7 @@ details.group .n{margin-left:auto;color:var(--muted)}
   <h1>OSPF TOPOLOGY EXPLORER</h1>
   <button id="b-search" title="Search (/)">Search</button>
   <button id="b-filter" title="Filters and display options">Filter</button>
+  <button id="b-sim" title="What-if simulation: shut links or routers, change costs, drain a router - nothing is sent to any device">Simulate</button>
   <button id="b-side" title="Show / hide the sidebar">Panel</button>
   <button id="b-theme" title="Theme">&#x25D0;</button>
   <button id="b-full" title="Full screen">&#x26F6;</button>
@@ -96,6 +131,7 @@ details.group .n{margin-left:auto;color:var(--muted)}
 <div id="app">
   <aside id="side">
     <div id="sel" class="hidden"></div>
+    <div id="simside"></div>
     <h2>Diagnostics &amp; Warnings</h2>
     <div id="diag"></div>
     <div id="trace"></div>
@@ -112,7 +148,19 @@ details.group .n{margin-left:auto;color:var(--muted)}
       <button id="b-reset" title="Forget dragged positions and restore the computed layout">Reset Layout</button>
       <button id="b-zin" title="Zoom in">+</button><button id="b-zout" title="Zoom out">&minus;</button><button id="b-fit" title="Fit to screen (f)">fit</button>
     </div>
-    <svg id="canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0"><g id="vp"><g id="areas"></g><g id="links"></g><g id="labels"></g><g id="nodes"></g></g></svg>
+    <div id="sim-bar" role="region" aria-label="What-if simulation">
+      <span class="sim-badge">SIMULATION MODE ACTIVE</span>
+      <label>Source A <select id="sim-a"></select></label>
+      <button id="sim-swap" title="Swap source and target">&#8644;</button>
+      <label>Target B <select id="sim-b"></select></label>
+      <span class="sim-metrics" id="sim-metrics"></span>
+      <button id="sim-reset" title="Undo every simulated change and show the real network again">Reset Simulation</button>
+      <button id="sim-exit" title="Leave simulation mode (discards the simulated changes)">Exit</button>
+      <div id="sim-diff"></div>
+      <div id="sim-changes"></div>
+    </div>
+    <div id="sim-pop"></div>
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0"><g id="vp"><g id="areas"></g><g id="links"></g><g id="simfx"></g><g id="labels"></g><g id="nodes"></g><g id="simtop"></g></g></svg>
     <div id="tip"></div>
     <div id="toast"></div>
     <div class="panel hidden" id="p-filter">
@@ -153,7 +201,8 @@ var PAL = {
     link: '#6b7f9c', oneway: '#a78bfa', added: '#22c55e', removed: '#ef4444', changed: '#f59e0b', unverified: '#94a3b8',
     full: '#22c55e', twoway: '#eab308', stuck: '#f97316', down: '#ef4444', path: '#38bdf8', focus: '#f43f5e', area: '#4f7fb0',
     areaFill: '#10203a', areaFillOpacity: 0.35, areaLabel: '#9cc0e6', bundleA: '#1e3a8a', bundleB: '#1e40af',
-    pillBg: '#0b1324', pillOpacity: 0.88, pillText: '#e6edf7', pillEdge: '#64748b', exportBg: '#0b1324'
+    pillBg: '#0b1324', pillOpacity: 0.88, pillText: '#e6edf7', pillEdge: '#64748b', exportBg: '#0b1324',
+    simPath: '#38bdf8', simRev: '#e879f9', simBad: '#ef4444', simWarn: '#f59e0b'
   },
   light: {
     router: '#1d4ed8', routerEdge: '#1e3a8a', abr: '#d97706', net: '#fbbf24', netEdge: '#b45309', ghost: '#64748b', ghostFill: '#e2e8f0',
@@ -161,7 +210,8 @@ var PAL = {
     link: '#64748b', oneway: '#7c3aed', added: '#16a34a', removed: '#dc2626', changed: '#c2670a', unverified: '#64748b',
     full: '#16a34a', twoway: '#a16207', stuck: '#ea580c', down: '#dc2626', path: '#0284c7', focus: '#e11d48', area: '#3b82f6',
     areaFill: '#dbeafe', areaFillOpacity: 0.5, areaLabel: '#1d4ed8', bundleA: '#93c5fd', bundleB: '#60a5fa',
-    pillBg: '#ffffff', pillOpacity: 0.95, pillText: '#0f172a', pillEdge: '#94a3b8', exportBg: '#f8fafc'
+    pillBg: '#ffffff', pillOpacity: 0.95, pillText: '#0f172a', pillEdge: '#94a3b8', exportBg: '#f8fafc',
+    simPath: '#0284c7', simRev: '#c026d3', simBad: '#dc2626', simWarn: '#c2670a'
   }
 };
 var C = PAL.dark;   // the palette in use; applyTheme() swaps it
@@ -212,6 +262,202 @@ function resetPositions(useSaved) {
     pos[n.id] = s ? { x: s[0], y: s[1] } : { x: n.x, y: n.y };
   });
 }
+
+// ------------------------------------------------------------------ what-if engine (pure: no DOM, no page state)
+/* SIM-ENGINE:BEGIN - tests/js/test_simulation.js runs exactly this block, so keep it free of page globals */
+var SIM_MAX_METRIC = 65535, SIM_PATH_LIMIT = 16;
+var SIM_NONE = { disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set() };
+var simDefaultModel = null;
+function simSetModel(model) { simDefaultModel = model; }
+function simMods(m) {
+  m = m || {};
+  return { disabledLinks: m.disabledLinks || SIM_NONE.disabledLinks, disabledNodes: m.disabledNodes || SIM_NONE.disabledNodes,
+    costOverrides: m.costOverrides || SIM_NONE.costOverrides, drainedNodes: m.drainedNodes || SIM_NONE.drainedNodes };
+}
+
+// What the SPF pays to cross a link in each direction (null = it cannot). The exporter computes this with the rules of the
+// Python SPF; for a scene without it, derive the same numbers from the link ends.
+function simLinkCosts(l) {
+  if (l.spf) return l.spf;
+  var out = { ab: null, ba: null };
+  if (l.oneWay || l.status === 'removed') return out;
+  (l.ends || []).forEach(function (e) {
+    if (typeof e.metric !== 'number') return;
+    if (e.from === l.a && e.to === l.b) out.ab = e.metric; else if (e.from === l.b && e.to === l.a) out.ba = e.metric;
+  });
+  if (l.kind === 'segment') { if (out.ab !== null && out.ba === null) out.ba = 0; else if (out.ba !== null && out.ab === null) out.ab = 0; }
+  return out;
+}
+
+// Directed graph for Dijkstra. Router -> router and router -> network edges cost the advertised metric; network -> router
+// edges (`attach`) cost 0 and cannot be tuned: a transit network is a node of its own, exactly as in the LSDB.
+function makeGraphModel(scene) {
+  var nodes = {}, edges = [], out = {}, byLink = {}, routers = [];
+  scene.nodes.forEach(function (n) { nodes[n.id] = n; out[n.id] = []; if (n.kind === 'router' && n.status !== 'removed') routers.push(n.id); });
+  scene.links.forEach(function (l) {
+    var costs = simLinkCosts(l); byLink[l.id] = [];
+    [['ab', l.a, l.b], ['ba', l.b, l.a]].forEach(function (d) {
+      var c = costs[d[0]];
+      if (typeof c !== 'number' || !nodes[d[1]] || !nodes[d[2]]) return;
+      var e = { id: edges.length, link: l.id, dir: d[0], from: d[1], to: d[2], cost: c, attach: nodes[d[1]].kind !== 'router' && nodes[d[2]].kind === 'router' };
+      edges.push(e); out[d[1]].push(e.id); byLink[l.id].push(e.id);
+    });
+  });
+  return { nodes: nodes, edges: edges, out: out, byLink: byLink, routers: routers };
+}
+
+// The cost of an edge under the simulated changes, or null when the edge is out of service.
+function simEdgeCost(e, mods) {
+  if (mods.disabledLinks.has(e.link) || mods.disabledNodes.has(e.from) || mods.disabledNodes.has(e.to)) return null;
+  var c = e.cost, ov = mods.costOverrides.get(e.link);
+  if (ov && !e.attach) { var v = e.dir === 'ab' ? ov.forwardCost : ov.reverseCost; if (typeof v === 'number') c = v; }
+  // max-metric router LSA (RFC 3137): the router advertises 65535 on its own links, so nobody routes *through* it
+  if (mods.drainedNodes.has(e.from) && !e.attach) c = Math.max(c, SIM_MAX_METRIC);
+  return c;
+}
+
+function simHeap() {
+  var a = [];
+  function less(i, j) { return a[i][0] < a[j][0] || (a[i][0] === a[j][0] && a[i][1] < a[j][1]); }
+  function swap(i, j) { var t = a[i]; a[i] = a[j]; a[j] = t; }
+  return {
+    size: function () { return a.length; },
+    push: function (d, seq, v) { a.push([d, seq, v]); var i = a.length - 1; while (i > 0) { var p = (i - 1) >> 1; if (!less(i, p)) break; swap(i, p); i = p; } },
+    pop: function () {
+      var top = a[0], last = a.pop();
+      if (a.length) { a[0] = last; var i = 0, n = a.length; for (;;) { var l = 2 * i + 1, r = l + 1, m = i; if (l < n && less(l, m)) m = l; if (r < n && less(r, m)) m = r; if (m === i) break; swap(i, m); i = m; } }
+      return top;
+    }
+  };
+}
+
+// Dijkstra from one node over the directed model. Every equal-cost predecessor edge is kept (ECMP);
+// a node nobody can reach keeps distance Infinity.
+function computeShortestPaths(sourceId, model, mods) {
+  mods = simMods(mods);
+  var dist = {}, preds = {};
+  Object.keys(model.nodes).forEach(function (id) { dist[id] = Infinity; preds[id] = []; });
+  var res = { source: sourceId, dist: dist, preds: preds, model: model, count: {} };
+  if (!model.nodes[sourceId] || mods.disabledNodes.has(sourceId)) return res;
+  var heap = simHeap(), seq = 0;
+  dist[sourceId] = 0; heap.push(0, seq++, sourceId);
+  while (heap.size()) {
+    var top = heap.pop(), d = top[0], u = top[2];
+    if (d > dist[u]) continue;
+    var list = model.out[u];
+    for (var i = 0; i < list.length; i++) {
+      var e = model.edges[list[i]], c = simEdgeCost(e, mods);
+      if (c === null) continue;
+      var nd = d + c, v = e.to;
+      if (nd < dist[v]) { dist[v] = nd; preds[v] = [e.id]; heap.push(nd, seq++, v); }
+      else if (nd === dist[v] && preds[v].indexOf(e.id) < 0) preds[v].push(e.id);
+    }
+  }
+  return res;
+}
+
+function simCountPaths(res, id) {
+  if (id === res.source) return 1;
+  if (res.count[id] !== undefined) return res.count[id];
+  res.count[id] = 0;                      // also stops a (never expected) zero-cost loop
+  var n = 0;
+  res.preds[id].forEach(function (ei) { n += simCountPaths(res, res.model.edges[ei].from); });
+  res.count[id] = n;
+  return n;
+}
+
+// Up to `limit` shortest paths source -> target, each as {nodes:[ids], links:[link ids]} (links[i] joins nodes[i] to nodes[i+1]).
+function simPaths(res, target, limit) {
+  limit = limit || SIM_PATH_LIMIT;
+  var found = [], seen = {};
+  if (!isFinite(res.dist[target])) return found;
+  seen[target] = 1;
+  (function walk(id, nodesTail, linksTail) {
+    if (found.length >= limit) return;
+    if (id === res.source) { found.push({ nodes: [id].concat(nodesTail), links: linksTail.slice() }); return; }
+    var ps = res.preds[id];
+    for (var i = 0; i < ps.length && found.length < limit; i++) {
+      var e = res.model.edges[ps[i]];
+      if (seen[e.from]) continue;
+      seen[e.from] = 1;
+      walk(e.from, [id].concat(nodesTail), [e.link].concat(linksTail));
+      delete seen[e.from];
+    }
+  })(target, [], []);
+  return found;
+}
+
+// dijkstra(source, target, disabledLinks, disabledNodes, costOverrides[, model, drainedNodes]) -> cost, ECMP count, paths
+function dijkstra(source, target, disabledLinks, disabledNodes, costOverrides, model, drainedNodes) {
+  model = model || simDefaultModel;
+  var res = computeShortestPaths(source, model, { disabledLinks: disabledLinks, disabledNodes: disabledNodes, costOverrides: costOverrides, drainedNodes: drainedNodes });
+  var ok = isFinite(res.dist[target]);
+  return { source: source, target: target, reachable: ok, cost: ok ? res.dist[target] : Infinity, ecmp: ok ? simCountPaths(res, target) : 0, paths: simPaths(res, target), spf: res };
+}
+
+function simSummary(res, target) {
+  var ok = isFinite(res.dist[target]);
+  return { reachable: ok, cost: ok ? res.dist[target] : Infinity, ecmp: ok ? simCountPaths(res, target) : 0, paths: simPaths(res, target) };
+}
+function simKey(p) { return p.nodes.join('>'); }
+function simKeys(paths, reversed) { return paths.map(function (p) { return reversed ? p.nodes.slice().reverse().join('>') : simKey(p); }).sort(); }
+function simSameList(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+function simChangeCount(s) { return s.disabledLinks.size + s.disabledNodes.size + s.costOverrides.size + (s.drainedNodes ? s.drainedNodes.size : 0); }
+
+// What the simulated changes do to the traffic from A to B (and back), plus every router A can no longer reach.
+function simAnalyze(model, state) {
+  var mods = simMods(state), src = state.sourceNode, dst = state.targetNode;
+  var out = { source: src, target: dst, changes: simChangeCount(mods), sourceDown: false, isolated: [], down: [], alreadyUnreachable: [], forward: null, reverse: null,
+    asymmetric: false, truncated: false, pathChanged: false, lost: [], gained: [] };
+  if (!src || !model.nodes[src]) return out;
+  out.sourceDown = mods.disabledNodes.has(src);
+  var before = computeShortestPaths(src, model, null), after = computeShortestPaths(src, model, mods);
+  Object.keys(model.nodes).forEach(function (id) {
+    if (id === src) return;
+    var was = isFinite(before.dist[id]), now = isFinite(after.dist[id]);
+    if (!was) out.alreadyUnreachable.push(id);
+    else if (mods.disabledNodes.has(id)) out.down.push(id);
+    else if (!now) out.isolated.push(id);
+  });
+  if (!dst || !model.nodes[dst] || dst === src) return out;
+  out.forward = { before: simSummary(before, dst), after: simSummary(after, dst) };
+  var rb = computeShortestPaths(dst, model, null), ra = computeShortestPaths(dst, model, mods);
+  out.reverse = { before: simSummary(rb, src), after: simSummary(ra, src) };
+  var f = out.forward, r = out.reverse;
+  if (f.after.reachable && r.after.reachable) {
+    out.truncated = f.after.ecmp > SIM_PATH_LIMIT || r.after.ecmp > SIM_PATH_LIMIT;
+    out.asymmetric = !out.truncated && !simSameList(simKeys(f.after.paths, false), simKeys(r.after.paths, true));
+  }
+  out.pathChanged = f.before.reachable !== f.after.reachable || !simSameList(simKeys(f.before.paths, false), simKeys(f.after.paths, false));
+  var was = {}, now = {};
+  f.before.paths.forEach(function (p) { p.links.forEach(function (l) { was[l] = 1; }); });
+  f.after.paths.forEach(function (p) { p.links.forEach(function (l) { now[l] = 1; }); });
+  out.lost = Object.keys(was).filter(function (l) { return !now[l]; });
+  out.gained = Object.keys(now).filter(function (l) { return !was[l]; });
+  return out;
+}
+
+// Maintenance view of draining `nodeId`: which routers keep their only way in through it (their traffic cannot drain, and
+// they would be cut if the router were then shut), seen from `viewFrom` (default: the first other router).
+function simDrainImpact(model, nodeId, viewFrom, state) {
+  var mods = simMods(state), src = viewFrom && viewFrom !== nodeId && model.nodes[viewFrom] ? viewFrom : null;
+  if (!src) model.routers.some(function (id) { if (id !== nodeId) { src = id; return true; } return false; });
+  var out = { node: nodeId, from: src, stranded: [], strandedPrefixes: 0, stillTransit: [] };
+  if (!src) return out;
+  var drained = new Set(mods.drainedNodes); drained.add(nodeId);
+  var down = new Set(mods.disabledNodes); down.add(nodeId);
+  var normal = computeShortestPaths(src, model, { disabledLinks: mods.disabledLinks, disabledNodes: mods.disabledNodes, costOverrides: mods.costOverrides, drainedNodes: mods.drainedNodes });
+  var drain = computeShortestPaths(src, model, { disabledLinks: mods.disabledLinks, disabledNodes: mods.disabledNodes, costOverrides: mods.costOverrides, drainedNodes: drained });
+  var cut = computeShortestPaths(src, model, { disabledLinks: mods.disabledLinks, disabledNodes: down, costOverrides: mods.costOverrides, drainedNodes: mods.drainedNodes });
+  model.routers.forEach(function (id) {
+    if (id === nodeId || id === src || !isFinite(normal.dist[id])) return;
+    var n = model.nodes[id];
+    if (!isFinite(cut.dist[id])) { out.stranded.push(id); out.strandedPrefixes += n.prefix_count || (n.prefixes || []).length; }
+    else if (drain.dist[id] >= SIM_MAX_METRIC && normal.dist[id] < SIM_MAX_METRIC) out.stillTransit.push(id);
+  });
+  return out;
+}
+/* SIM-ENGINE:END */
 
 // ------------------------------------------------------------------ svg helpers
 function svg(tag, attrs, parent) {
@@ -441,6 +687,7 @@ function placeLabels() {
     return w(b) - w(a) || (a.id < b.id ? -1 : 1);
   });
   ordered.forEach(function (l) {
+    if (sim.active && (sim.disabledLinks.has(l.id) || sim.costOverrides.has(l.id))) return;   // the simulation overlay labels these
     var e = l.geo, len = Math.hypot(e.pb.x - e.pa.x, e.pb.y - e.pa.y), ends = l.ends || [];
     var show = hot[l.id] || (state.show.costs && !l.oneWay);
     if (!show) return;
@@ -460,6 +707,7 @@ function placeLabels() {
       if (len > textW(text, size) + 40) label((e.pa.x + e.pb.x) / 2, (e.pa.y + e.pb.y) / 2, e.ang, text, C.pillEdge, false);
     }
   });
+  drawSimFx();
 }
 function hotLinks() {
   var out = {};
@@ -483,7 +731,7 @@ function applyDim() {
   model.nodes.forEach(function (n) {
     var e = els.nodes[n.id]; if (!e) return;
     var dim = lit && !lit[n.id] && !(n.kind === 'bundle' && lit[n.hub]);
-    e.g.setAttribute('opacity', dim ? .18 : 1);
+    e.g.setAttribute('opacity', sim.active && sim.disabledNodes.has(n.id) ? .35 : dim ? .18 : 1);
     var ring = (state.focus && state.focus.nodes.indexOf(n.id) >= 0) || (state.matches && state.matches.has(n.id)) || (state.sel && state.sel.type === 'node' && state.sel.id === n.id);
     e.ring.setAttribute('display', ring ? 'inline' : 'none');
     if (state.sel && state.sel.type === 'node' && state.sel.id === n.id) e.ring.setAttribute('stroke', C.path); else e.ring.setAttribute('stroke', C.focus);
@@ -518,7 +766,7 @@ function bounds(ids) {
   return x0 === Infinity ? { x0: 0, y0: 0, x1: 100, y1: 100 } : { x0: x0, y0: y0, x1: x1, y1: y1 };
 }
 function fit(ids, maxK) {
-  var b = bounds(ids), s = stageSize(), pad = ids ? 140 : 70, top = 60;
+  var b = bounds(ids), s = stageSize(), pad = ids ? 140 : 70, top = 60 + (sim.active ? $('sim-bar').offsetHeight + 4 : 0);
   var k = Math.min((s.w - 2 * pad) / Math.max(1, b.x1 - b.x0), (s.h - 2 * pad - top) / Math.max(1, b.y1 - b.y0));
   k = Math.max(.08, Math.min(maxK || 1.4, k));
   state.view = { k: k, x: (s.w - (b.x1 - b.x0) * k) / 2 - b.x0 * k, y: top + (s.h - top - (b.y1 - b.y0) * k) / 2 - b.y0 * k };
@@ -574,6 +822,7 @@ canvas.addEventListener('mousedown', function (ev) {
   if (ev.button !== 0) return;
   var nodeEl = ev.target.closest && ev.target.closest('[data-node]');
   hideTip();
+  if (popAt) closeSimPopover();
   if (document.activeElement && document.activeElement.blur && document.activeElement !== document.body) document.activeElement.blur();
   if (nodeEl) {
     var id = nodeEl.getAttribute('data-node'), w = toWorld(ev);
@@ -598,6 +847,7 @@ window.addEventListener('mousemove', function (ev) {
   if (drag.id.indexOf('bundle:') === 0) { var bn = model.nodes.filter(function (n) { return n.id === drag.id; })[0]; if (bn) { var cx = 0, cy = 0; drag.movers.forEach(function (m) { cx += pos[m].x; cy += pos[m].y; }); pos[drag.id] = { x: cx / drag.movers.length, y: cy / drag.movers.length }; } }
   moveNode(drag.id);
   model.links.forEach(function (l) { if (l.a === drag.id || l.b === drag.id || drag.movers.indexOf(l.a) >= 0 || drag.movers.indexOf(l.b) >= 0) moveLink(l); });
+  if (sim.active) drawSimFx();
 });
 window.addEventListener('mouseup', function (ev) {
   if (!drag) return;
@@ -605,11 +855,11 @@ window.addEventListener('mouseup', function (ev) {
   if (d.type === 'node') {
     if (d.moved) { saveLayout(); placeLabels(); toast('Position saved'); }
     else if (d.id.indexOf('bundle:') === 0) { state.bundle.expanded[d.id.slice(7)] = true; render(); toast('Bundle expanded'); }
-    else select({ type: 'node', id: d.id });
+    else { select({ type: 'node', id: d.id }); if (sim.active) openSimPopover('node', d.id, ev); }
   } else if (!d.moved) {
     var linkEl = ev.target.closest && ev.target.closest('[data-link]');
-    if (linkEl && links[linkEl.getAttribute('data-link')]) select({ type: 'link', id: linkEl.getAttribute('data-link') });
-    else clearSelection();
+    if (linkEl && links[linkEl.getAttribute('data-link')]) { select({ type: 'link', id: linkEl.getAttribute('data-link') }); if (sim.active) openSimPopover('link', linkEl.getAttribute('data-link'), ev); }
+    else { clearSelection(); closeSimPopover(); }
   }
 });
 canvas.addEventListener('wheel', function (ev) {
@@ -689,6 +939,13 @@ function card(cls, icon, title, sub, onclick) {
 }
 function buildDiagnostics() {
   var d = SCENE.diagnostics, box = $('diag'); box.textContent = '';
+  var ac = SCENE.area_coverage;   // which OSPF areas the seeds covered: one line per area, not per router
+  if (ac && ac.missing && ac.missing.length) ac.missing.forEach(function (m) {
+    var cands = m.candidates || [], c = card(m.named ? 'warn' : 'info', '\u26a0', m.area ? 'Area ' + m.area + ' not polled' : 'An area behind an ABR is not polled',
+      'no seed router covers it' + (cands.length ? ' \u00b7 add e.g. ' + cands.slice(0, 2).join(' or ') : '') + ' \u00b7 click to find', function () { focusOn('Seed candidates' + (m.area ? ' for area ' + m.area : ''), cands, []); });
+    c.className += ' ac'; c.title = (m.evidence || []).join('\n'); box.appendChild(c);
+  });
+  else if (ac && ac.polled && ac.polled.length > 1) { var ok = card('plain', '\u2714', 'Area coverage complete', ac.polled.length + ' areas polled', null); ok.className += ' ac'; box.appendChild(ok); }
   if (d.split) {
     var small = []; d.split.groups.slice(1).forEach(function (g) { small = small.concat(g); });
     box.appendChild(card('crit', '\u26a0', 'Topology Split Detected (' + d.split.parts + ' parts)', d.split.groups.map(function (g) { return g.length + ' nodes'; }).join(' + '), function () { focusOn('Disconnected part(s): ' + small.length + ' node(s)', small, []); }));
@@ -720,7 +977,7 @@ function buildDiagnostics() {
       var ns = c.addedNodes.concat(c.removedNodes); var ls = SCENE.links.filter(function (l) { return l.status; }).map(function (l) { return l.id; });
       ls.forEach(function (id) { ns.push(links[id].a, links[id].b); }); focusOn('Changes since last run', ns, ls); }) : card('plain', '\u2714', 'No changes since last run', '', null));
   }
-  if (!box.children.length) box.appendChild(card('plain', '\u2714', 'No diagnostics', 'the LSDB looks consistent', null));
+  if (!box.querySelector('.card:not(.ac)')) box.appendChild(card('plain', '\u2714', 'No diagnostics', 'the LSDB looks consistent', null));
   var t = SCENE.trace, tb = $('trace'); tb.textContent = '';
   if (t) {
     tb.innerHTML = '<h3>Path trace</h3>';
@@ -729,7 +986,7 @@ function buildDiagnostics() {
   }
 }
 var KIND_TITLE = { ADJ_NOT_FULL: 'LSDB adjacency vs neighbour state', ADJ_MISSING: 'LSDB adjacency, neighbour missing', NBR_NOT_IN_LSDB: 'Neighbour not in LSDB', NBR_STATE_CHANGE: 'Neighbour flap / state change', NBR_LOST: 'Neighbour lost', NBR_NEW: 'New neighbour',
-  ROUTE_MISSING: 'Route missing from RIB (blackhole)', NEXTHOP_DOWN: 'Next hop via non-Full neighbour', ROUTE_STALE: 'Stale route (no LSA)', RIB_EMPTY: 'RIB empty', ROUTE_OVERRIDDEN: 'Route overridden', COST_MISMATCH: 'RIB cost differs from SPF', NEXTHOP_MISMATCH: 'Next hop off the shortest path', ECMP_MISSING: 'ECMP path missing' };
+  ROUTE_MISSING: 'Route missing from RIB (blackhole)', NEXTHOP_DOWN: 'Next hop via non-Full neighbour', ROUTE_STALE: 'Stale route (no LSA)', RIB_EMPTY: 'RIB empty', ROUTE_OVERRIDDEN: 'Route overridden', COST_MISMATCH: 'RIB cost differs from SPF', NEXTHOP_MISMATCH: 'Next hop off the shortest path', ECMP_MISSING: 'ECMP path missing', AREA_UNPOLLED: 'Area not polled (no seed)' };
 function buildFindings() {
   var chips = $('sevchips'), box = $('findings'); chips.textContent = box.textContent = '';
   var counts = { critical: 0, warning: 0, info: 0 };
@@ -829,7 +1086,7 @@ document.addEventListener('keydown', function (ev) {
   var typing = /INPUT|TEXTAREA|SELECT/.test((ev.target.tagName || ''));
   if (ev.key === '/' && !typing) { ev.preventDefault(); $('q').focus(); }
   else if (typing) return;
-  else if (ev.key === 'Escape') { clearSelection(); $('p-filter').classList.add('hidden'); $('p-more').classList.add('hidden'); }
+  else if (ev.key === 'Escape') { closeSimPopover(); clearSelection(); $('p-filter').classList.add('hidden'); $('p-more').classList.add('hidden'); }
   else if (ev.key === 'f') fit();
   else if (ev.key === '+' || ev.key === '=') $('b-zin').click();
   else if (ev.key === '-') $('b-zout').click();
@@ -866,13 +1123,332 @@ if (media) {
   if (media.addEventListener) media.addEventListener('change', onSystemChange); else if (media.addListener) media.addListener(onSystemChange);
 }
 
+// ------------------------------------------------------------------ what-if simulation (browser memory only: nothing is written anywhere)
+var GM = makeGraphModel(SCENE);
+simSetModel(GM);
+var sim = { active: false, disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set(), sourceNode: null, targetNode: null };
+var simRes = null, simMs = 0, simDrain = null;
+var gSimFx = $('simfx'), gSimTop = $('simtop'), popEl = $('sim-pop'), popAt = null;
+
+function simTitle(id) { return nodes[id] ? nodes[id].title : id; }
+function simLinkName(l) { return simTitle(l.a) + ' \u2194 ' + simTitle(l.b); }
+function simPathText(p) {
+  var last = p.nodes.length - 1;
+  return p.nodes.filter(function (id, i) { return nodes[id].kind === 'router' || i === 0 || i === last; }).map(simTitle).join(' \u203a ');
+}
+function simPlural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
+function simTunable(l) { return (GM.byLink[l.id] || []).map(function (i) { return GM.edges[i]; }).filter(function (e) { return !e.attach; }); }
+function simOverride(l, e) { var ov = sim.costOverrides.get(l.id); return ov ? (e.dir === 'ab' ? ov.forwardCost : ov.reverseCost) : undefined; }
+function simEdgeNow(e) { var v = simOverride(links[e.link], e); var c = typeof v === 'number' ? v : e.cost; return sim.drainedNodes.has(e.from) && !e.attach ? Math.max(c, SIM_MAX_METRIC) : c; }
+
+// ---- changes (every one is undoable; none touches SCENE)
+function simSetSource(id) { sim.sourceNode = id || null; if (id && id === sim.targetNode) sim.targetNode = null; simRefresh(); }
+function simSetTarget(id) { sim.targetNode = id || null; if (id && id === sim.sourceNode) sim.sourceNode = null; simRefresh(); }
+function simToggleLink(id) { if (sim.disabledLinks.has(id)) sim.disabledLinks.delete(id); else sim.disabledLinks.add(id); simRefresh(); }
+function simToggleNode(id) { if (sim.disabledNodes.has(id)) sim.disabledNodes.delete(id); else sim.disabledNodes.add(id); simRefresh(); }
+function simToggleDrain(id) { if (sim.drainedNodes.has(id)) sim.drainedNodes.delete(id); else sim.drainedNodes.add(id); simRefresh(); }
+function simSetCost(id, dir, value) {
+  var l = links[id], ov = sim.costOverrides.get(id) || {};
+  if (!(value >= 1 && value <= SIM_MAX_METRIC) || Math.floor(value) !== value) { toast('Cost must be a whole number from 1 to ' + SIM_MAX_METRIC); return false; }
+  simTunable(l).forEach(function (e) {
+    if (dir !== 'both' && dir !== e.dir) return;
+    var key = e.dir === 'ab' ? 'forwardCost' : 'reverseCost';
+    if (value === e.cost) delete ov[key]; else ov[key] = value;   // setting the real cost back is no change at all
+  });
+  if (ov.forwardCost === undefined && ov.reverseCost === undefined) sim.costOverrides.delete(id); else sim.costOverrides.set(id, ov);
+  simRefresh();
+  return true;
+}
+function simClearCost(id) { sim.costOverrides.delete(id); simRefresh(); }
+function simReset() {
+  var n = simChangeCount(sim);
+  sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); simDrain = null;
+  closeSimPopover(); simRefresh();
+  toast(n ? 'Simulation reset: the real network is shown again' : 'Nothing to reset');
+}
+function simSetActive(on) {
+  on = !!on;
+  if (on === sim.active) return;
+  sim.active = on;
+  if (!on) { sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); sim.sourceNode = sim.targetNode = null; simDrain = null; closeSimPopover(); }
+  $('b-sim').classList.toggle('on', on);
+  $('sim-bar').classList.toggle('on', on);
+  simRefresh();
+  fit();
+  toast(on ? 'Simulation mode: click a link or a router. Nothing is sent to any device.' : 'Simulation mode off');
+}
+
+// ---- analysis + redraw
+function simRefresh() {
+  var t0 = window.performance && performance.now ? performance.now() : Date.now();
+  simRes = sim.active ? simAnalyze(GM, sim) : null;
+  simMs = (window.performance && performance.now ? performance.now() : Date.now()) - t0;
+  renderSimBar(); renderSimSide();
+  applyDim(); placeLabels();           // placeLabels ends by redrawing the simulation overlay
+  if (popAt) openSimPopover();         // keep an open popover in step with what just changed
+}
+function simChip(cls, text, title, onclick) {
+  var s = document.createElement('span'); s.className = 'sim-chip ' + cls; s.textContent = text;
+  if (title) s.title = title;
+  if (onclick) { s.className += ' undo'; s.addEventListener('click', onclick); }
+  return s;
+}
+function simCost(c) { return isFinite(c) ? String(c) : '\u221e'; }
+function renderSimBar() {
+  var bar = $('sim-bar');
+  if (!sim.active) { return; }
+  $('sim-a').value = sim.sourceNode || ''; $('sim-b').value = sim.targetNode || '';
+  var box = $('sim-metrics'), diff = $('sim-diff'), chg = $('sim-changes'), r = simRes;
+  box.textContent = diff.textContent = chg.textContent = '';
+  if (!r.source || !r.forward) {
+    box.appendChild(simChip('dim', r.source ? 'Pick a Target (B) to compare paths' : 'Pick Source (A) and Target (B): click a router, or use the lists'));
+  } else {
+    var f = r.forward, was = f.before, now = f.after;
+    if (!now.reachable) box.appendChild(simChip('bad', 'UNREACHABLE', 'B cannot be reached from A with these changes'));
+    if (!now.reachable && was.reachable) box.appendChild(simChip('dim', 'was cost ' + was.cost));
+    else if (!now.reachable) box.appendChild(simChip('warn', 'already unreachable in the real network'));
+    if (now.reachable) {
+      var dc = now.cost - was.cost;
+      box.appendChild(was.reachable && dc !== 0 ? simChip('warn', 'Cost: ' + was.cost + ' \u2192 ' + now.cost + ' (' + (dc > 0 ? '+' : '') + dc + ')') : simChip('ok', 'Cost: ' + now.cost + (was.reachable ? ' (unchanged)' : '')));
+      var ec = 'ECMP: ' + simPlural(was.ecmp, 'path') + ' \u2192 ' + simPlural(now.ecmp, 'path');
+      box.appendChild(was.ecmp !== now.ecmp ? simChip('warn', ec) : simChip('dim', 'ECMP: ' + simPlural(now.ecmp, 'path')));
+      box.appendChild(r.pathChanged ? simChip('warn', 'Path changed') : simChip('ok', 'Path unchanged'));
+    }
+    if (r.asymmetric) box.appendChild(simChip('rev', '\u26a0\ufe0f Asymmetric Routing Detected', 'Forward (cyan) and reverse (magenta) take different routes'));
+    if (now.reachable && !r.reverse.after.reachable) box.appendChild(simChip('bad', 'B \u2192 A UNREACHABLE', 'A reaches B, but B has no usable way back'));
+    diff.style.display = 'grid';
+    var row = function (label, s, paths) {
+      var k = document.createElement('b'); k.textContent = label; diff.appendChild(k);
+      var v = document.createElement('span');
+      v.innerHTML = s.reachable ? 'cost <b>' + esc(s.cost) + '</b> \u00b7 ' + esc(simPlural(s.ecmp, 'path')) + ' \u00b7 ' + paths : '<b class="cut">unreachable</b>';
+      diff.appendChild(v);
+    };
+    var txt = function (s, cls) { return s.paths.slice(0, 2).map(function (p) { return '<span class="' + cls + '">' + esc(simPathText(p)) + '</span>'; }).join(' | ') + (s.paths.length > 2 ? ' +' + (s.paths.length - 2) + ' more' : ''); };
+    row('Before', was, txt(was, ''));
+    row('After', now, txt(now, r.pathChanged ? 'new' : ''));
+  }
+  if (r.isolated.length) box.appendChild(simChip('bad', '\u26a0 ' + simPlural(r.isolated.length, 'node') + ' isolated from A', r.isolated.map(simTitle).join(', ') + ' - click to find', function () { focusOn('Isolated by the simulation', r.isolated, []); }));
+  if (r.sourceDown) box.appendChild(simChip('bad', 'Source A is down'));
+  box.appendChild(simChip('dim', 'SPF ' + (simMs < 0.1 ? '<0.1' : simMs.toFixed(1)) + ' ms', 'Client-side Dijkstra, recomputed on every change'));
+  // the list of changes, each one a chip that undoes itself when clicked
+  var any = false;
+  function add(text, undo) { any = true; chg.appendChild(simChip('warn', text + '  \u00d7', 'Click to undo', undo)); }
+  sim.disabledLinks.forEach(function (id) { add('Link down: ' + simLinkName(links[id]), function () { simToggleLink(id); }); });
+  sim.disabledNodes.forEach(function (id) { add('Node down: ' + simTitle(id), function () { simToggleNode(id); }); });
+  sim.drainedNodes.forEach(function (id) { add('Drain: ' + simTitle(id) + ' (max-metric ' + SIM_MAX_METRIC + ')', function () { simToggleDrain(id); }); });
+  sim.costOverrides.forEach(function (ov, id) {
+    var l = links[id];
+    simTunable(l).forEach(function (e) { var v = simOverride(l, e); if (typeof v === 'number') add('Cost ' + simTitle(e.from) + ' \u2192 ' + simTitle(e.to) + ': ' + e.cost + ' \u2192 ' + v, function () { simClearCost(id); }); });
+  });
+  chg.style.display = any ? 'flex' : 'none';
+  if (!r.forward) diff.style.display = 'none';
+  bar.title = '';
+}
+function renderSimSide() {
+  var box = $('simside'); box.textContent = '';
+  if (!sim.active) return;
+  var n = simChangeCount(sim), r = simRes;
+  var sub = n ? simPlural(n, 'change') + ' applied - click to reset' : 'no changes yet - click a link or a router';
+  if (r && r.isolated.length) sub += ' \u00b7 ' + simPlural(r.isolated.length, 'node') + ' isolated';
+  box.appendChild(card('warn', '\u25b6', 'Simulation active', sub, simReset));
+}
+
+// ---- overlay drawn over the picture
+function simSegment(from, linkId, off, visible) {
+  var l = links[linkId];
+  if (!l || !l.geo || !visible[linkId]) return null;
+  var e = l.geo, fwd = l.a === from, p0 = fwd ? e.pa : e.pb, p1 = fwd ? e.pb : e.pa;
+  if (off) {
+    var dx = p1.x - p0.x, dy = p1.y - p0.y, len = Math.hypot(dx, dy) || 1, ox = -dy / len * off, oy = dx / len * off;
+    p0 = { x: p0.x + ox, y: p0.y + oy }; p1 = { x: p1.x + ox, y: p1.y + oy };
+  }
+  return [p0, p1];
+}
+function simLine(parent, seg, attrs, cls) {
+  var a = { x1: seg[0].x, y1: seg[0].y, x2: seg[1].x, y2: seg[1].y, fill: 'none', 'stroke-linecap': 'round' };
+  for (var k in attrs) a[k] = attrs[k];
+  if (cls) a['class'] = cls;
+  return svg('line', a, parent);
+}
+function simPill(parent, x, y, deg, text, edge, cls) {
+  var k = state.view.k, size = Math.max(9, Math.min(18, 12.5 / k)), w = text.length * size * 0.58 + 12, h = size + 7;
+  if (deg > 90 || deg < -90) deg += 180;
+  var g = svg('g', { transform: 'translate(' + x + ',' + y + ') rotate(' + deg + ')', 'class': cls || null }, parent);
+  svg('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, fill: C.pillBg, 'fill-opacity': .96, stroke: edge, 'stroke-width': 1.6 / k }, g);
+  var t = svg('text', { x: 0, y: size * .36, 'text-anchor': 'middle', 'font-size': size, 'font-weight': 700, 'font-family': 'sans-serif', fill: edge }, g);
+  t.textContent = text;
+  return g;
+}
+function drawSimFx() {
+  gSimFx.textContent = gSimTop.textContent = '';
+  model.links.forEach(function (l) { if (l.el && !l.virtual) l.el.vis.setAttribute('stroke-opacity', sim.active && sim.disabledLinks.has(l.id) ? .12 : linkStyle(l).opacity); });
+  if (!sim.active || !simRes) return;
+  var r = simRes, k = state.view.k, visible = {}, mnode = {};
+  model.links.forEach(function (l) { if (!l.virtual && l.geo) visible[l.id] = 1; });
+  model.nodes.forEach(function (n) { mnode[n.id] = n; });
+  function hops(p, off, attrs, cls, glow) {
+    for (var i = 0; i < p.links.length; i++) {
+      var seg = simSegment(p.nodes[i], p.links[i], off, visible);
+      if (!seg) continue;
+      if (glow) simLine(gSimFx, seg, { stroke: attrs.stroke, 'stroke-width': attrs['stroke-width'] + 8, 'stroke-opacity': .22 });
+      simLine(gSimFx, seg, attrs, cls);
+    }
+  }
+  // 1. the path that existed before and is gone now: faded red, dashed
+  if (r.forward && r.lost.length) {
+    r.forward.before.paths.forEach(function (p) {
+      p.links.forEach(function (lid, i) { if (r.lost.indexOf(lid) < 0) return; var seg = simSegment(p.nodes[i], lid, 0, visible); if (seg) simLine(gSimFx, seg, { stroke: C.simBad, 'stroke-width': 5, 'stroke-opacity': .5, 'stroke-dasharray': '3 8' }, 'sim-lost'); });
+    });
+  }
+  // 2. the live path A -> B (cyan) and, when it differs, the way back (magenta)
+  if (r.forward && r.forward.after.reachable) {
+    r.forward.after.paths.forEach(function (p) { hops(p, r.asymmetric ? -3 : 0, { stroke: C.simPath, 'stroke-width': 4.5, 'stroke-dasharray': '11 8' }, 'sim-path-active', true); });
+    if (r.asymmetric) r.reverse.after.paths.forEach(function (p) { hops(p, 3, { stroke: C.simRev, 'stroke-width': 4.5, 'stroke-dasharray': '11 8' }, 'sim-path-rev', true); });
+  }
+  // 3. links that are down: red dashed with an X; links with a changed cost: amber pill "old -> new" (X and pill sit above the
+  //    routers so a short link cannot hide them)
+  var rad = Math.max(7, Math.min(15, 10 / k));
+  model.links.forEach(function (l) {
+    if (l.virtual || !l.geo) return;
+    var e = l.geo, mx = (e.pa.x + e.pb.x) / 2, my = (e.pa.y + e.pb.y) / 2, deg = e.ang * 180 / Math.PI;
+    if (sim.disabledLinks.has(l.id)) {
+      simLine(gSimFx, [e.pa, e.pb], { stroke: C.simBad, 'stroke-width': 3.4, 'stroke-dasharray': '9 6' }, 'sim-disabled');
+      var g = svg('g', { 'class': 'sim-disabled' }, gSimTop);
+      svg('circle', { cx: mx, cy: my, r: rad, fill: C.pillBg, stroke: C.simBad, 'stroke-width': 2 }, g);
+      var d = rad * .5;
+      svg('line', { x1: mx - d, y1: my - d, x2: mx + d, y2: my + d, stroke: C.simBad, 'stroke-width': 3, 'stroke-linecap': 'round' }, g);
+      svg('line', { x1: mx - d, y1: my + d, x2: mx + d, y2: my - d, stroke: C.simBad, 'stroke-width': 3, 'stroke-linecap': 'round' }, g);
+      return;
+    }
+    var parts = [], flip = deg > 90 || deg < -90;
+    simTunable(l).forEach(function (ed) {
+      var v = simOverride(l, ed);
+      if (typeof v !== 'number') return;
+      var arrow = (ed.dir === 'ab') !== flip ? '\u25b8' : '\u25c2';
+      parts.push((simTunable(l).length > 1 ? arrow + ' ' : '') + ed.cost + '\u2192' + v);
+    });
+    if (parts.length) {
+      var lab = simPill(gSimTop, mx, my, deg, parts.join('   '), C.simWarn, 'sim-overridden');
+      lab.setAttribute('title', 'Cost changed by the simulation');
+    }
+  });
+  // 4. nodes: isolated (red ring + badge), down (X), drained (amber tag), and the A / B ends
+  function around(id, draw) {
+    var n = mnode[id], p = pos[id];
+    if (!n || !p) return;
+    draw(svg('g', { transform: 'translate(' + p.x + ',' + p.y + ')' }, gSimTop), n.w / 2, n.h / 2, n);
+  }
+  function badge(g, x, y, text, fill, ring) {
+    svg('circle', { cx: x, cy: y, r: 11, fill: fill, stroke: ring, 'stroke-width': 2 }, g);
+    var t = svg('text', { x: x, y: y + 4.5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 800, 'font-family': 'sans-serif', fill: '#ffffff' }, g);
+    t.textContent = text;
+  }
+  r.isolated.forEach(function (id) {
+    around(id, function (g, hw, hh) {
+      svg('rect', { x: -hw - 7, y: -hh - 7, width: hw * 2 + 14, height: hh * 2 + 14, rx: 14, fill: 'none', stroke: C.simBad, 'stroke-width': 3.5, 'stroke-dasharray': '7 5' }, g);
+      badge(g, hw + 2, -hh - 2, '!', C.simBad, C.pillBg);
+    });
+  });
+  sim.disabledNodes.forEach(function (id) {
+    around(id, function (g, hw, hh) {
+      svg('line', { x1: -hw, y1: -hh, x2: hw, y2: hh, stroke: C.simBad, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
+      svg('line', { x1: -hw, y1: hh, x2: hw, y2: -hh, stroke: C.simBad, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
+      simPill(g, 0, hh + 16, 0, 'DOWN', C.simBad);
+    });
+  });
+  sim.drainedNodes.forEach(function (id) { around(id, function (g, hw, hh) { simPill(g, 0, -hh - 16, 0, 'DRAIN ' + SIM_MAX_METRIC, C.simWarn); }); });
+  [[sim.sourceNode, 'A', C.simPath], [sim.targetNode, 'B', C.simWarn]].forEach(function (x) {
+    if (x[0]) around(x[0], function (g, hw, hh) { badge(g, -hw - 2, -hh - 2, x[1], C.dark, x[2]); });
+  });
+}
+
+// ---- popovers (click a link or a router while simulating)
+function closeSimPopover() { popEl.style.display = 'none'; popAt = null; }
+function popBtn(parent, text, fn, title) {
+  var b = document.createElement('button'); b.textContent = text; if (title) b.title = title;
+  b.addEventListener('click', function (ev) { ev.stopPropagation(); fn(); });
+  parent.appendChild(b); return b;
+}
+function popText(parent, cls, text) { var d = document.createElement('div'); d.className = cls; d.textContent = text; parent.appendChild(d); return d; }
+function openSimPopover(kind, id, ev) {
+  var stage = $('stage').getBoundingClientRect();
+  if (kind) popAt = { kind: kind, id: id, x: ev ? ev.clientX - stage.left : (popAt ? popAt.x : 40), y: ev ? ev.clientY - stage.top : (popAt ? popAt.y : 80) };
+  if (!popAt) return;
+  popEl.textContent = '';
+  var x = document.createElement('button'); x.className = 'x'; x.textContent = '\u00d7'; x.title = 'Close (Esc)'; x.onclick = closeSimPopover; popEl.appendChild(x);
+  if (popAt.kind === 'link') linkPopover(links[popAt.id]); else nodePopover(nodes[popAt.id]);
+  popEl.style.display = 'block';
+  popEl.style.left = Math.max(8, Math.min(popAt.x + 14, stage.width - 280)) + 'px';
+  popEl.style.top = Math.max(8, Math.min(popAt.y + 14, stage.height - popEl.offsetHeight - 10)) + 'px';
+}
+function linkPopover(l) {
+  var h = document.createElement('h5'); h.textContent = simLinkName(l); popEl.appendChild(h);
+  var down = sim.disabledLinks.has(l.id), tun = simTunable(l);
+  popText(popEl, 'sub', down ? 'DOWN in the simulation' : (tun.length ? tun.map(function (e) { var v = simEdgeNow(e); return simTitle(e.from) + ' \u2192 ' + simTitle(e.to) + ': ' + (v !== e.cost ? e.cost + ' \u2192 ' + v : v); }).join('  \u00b7  ') : 'not used by the SPF (one-way or removed)'));
+  popBtn(popEl, down ? 'Toggle Link Up (enable)' : 'Toggle Link Down (shut)', function () { simToggleLink(l.id); });
+  if (!tun.length) return;
+  var dirSel = document.createElement('select');
+  if (tun.length > 1) { var o = document.createElement('option'); o.value = 'both'; o.textContent = 'both directions'; dirSel.appendChild(o); }
+  tun.forEach(function (e) { var o2 = document.createElement('option'); o2.value = e.dir; o2.textContent = simTitle(e.from) + ' \u2192 ' + simTitle(e.to) + ' only'; dirSel.appendChild(o2); });
+  var row = document.createElement('div'); row.className = 'r2'; popEl.appendChild(row);
+  var inp = document.createElement('input'); inp.type = 'number'; inp.min = 1; inp.max = SIM_MAX_METRIC; inp.step = 1; inp.value = simEdgeNow(tun[0]); inp.title = 'Cost, 1 to ' + SIM_MAX_METRIC;
+  inp.addEventListener('keydown', function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') simSetCost(l.id, dirSel.value, parseInt(inp.value, 10)); });
+  row.appendChild(document.createTextNode('Cost')); row.appendChild(inp);
+  var set = document.createElement('button'); set.textContent = 'Set'; set.onclick = function (ev) { ev.stopPropagation(); simSetCost(l.id, dirSel.value, parseInt(inp.value, 10)); }; row.appendChild(set);
+  popEl.appendChild(dirSel);
+  popBtn(popEl, 'Set Max-Metric (' + SIM_MAX_METRIC + ')', function () { simSetCost(l.id, dirSel.value, SIM_MAX_METRIC); }, 'Drain traffic off this link: it stays up, but every path prefers another way');
+  if (sim.costOverrides.has(l.id)) popBtn(popEl, 'Revert cost', function () { simClearCost(l.id); });
+}
+function nodePopover(n) {
+  var h = document.createElement('h5'); h.textContent = n.title; popEl.appendChild(h);
+  var down = sim.disabledNodes.has(n.id), drained = sim.drainedNodes.has(n.id), isRouter = n.kind === 'router';
+  popText(popEl, 'sub', (isRouter ? 'Router' : 'Transit network') + (down ? ' \u00b7 DOWN in the simulation' : '') + (drained ? ' \u00b7 drained' : ''));
+  if (isRouter) {
+    popBtn(popEl, sim.sourceNode === n.id ? 'Source (A) \u2713 - click to clear' : 'Set as Path Source (A)', function () { simSetSource(sim.sourceNode === n.id ? null : n.id); });
+    popBtn(popEl, sim.targetNode === n.id ? 'Target (B) \u2713 - click to clear' : 'Set as Path Target (B)', function () { simSetTarget(sim.targetNode === n.id ? null : n.id); });
+  }
+  popBtn(popEl, down ? 'Toggle Node Up (power on)' : 'Toggle Node Down (reboot / outage)', function () { simToggleNode(n.id); simDrain = null; });
+  if (isRouter) {
+    popBtn(popEl, drained ? 'Remove Max-Metric Router LSA' : 'Set Max-Metric Router LSA (Drain Router)', function () {
+      simToggleDrain(n.id);
+      simDrain = sim.drainedNodes.has(n.id) ? simDrainImpact(GM, n.id, sim.sourceNode, sim) : null;
+      openSimPopover();
+    }, 'The router advertises ' + SIM_MAX_METRIC + ' on all its own links (RFC 3137): transit traffic moves away, its own networks stay reachable');
+    if (simDrain && simDrain.node === n.id && drained) {
+      var s = simDrain, box = document.createElement('div');
+      var risky = s.stranded.length;
+      box.className = 'note ' + (risky ? 'bad' : 'ok');
+      box.textContent = (risky
+        ? simPlural(s.stranded.length, 'router') + ' (' + simPlural(s.strandedPrefixes, 'stub network') + ') hang only off this router: ' + s.stranded.map(simTitle).join(', ') + '. Their traffic cannot drain, and shutting it would cut them off.'
+        : 'Every other router has another way: safe to shut this one once the drain has converged.')
+        + (s.stillTransit.length ? ' ' + simPlural(s.stillTransit.length, 'router') + ' still route through it at cost ' + SIM_MAX_METRIC + '+.' : '') + ' (seen from ' + simTitle(s.from) + ')';
+      popEl.appendChild(box);
+    }
+  }
+}
+
+// ---- wiring
+(function () {
+  var a = $('sim-a'), b = $('sim-b');
+  [a, b].forEach(function (sel) {
+    var o = document.createElement('option'); o.value = ''; o.textContent = '\u2014 pick a router \u2014'; sel.appendChild(o);
+    GM.routers.slice().sort(function (x, y) { return simTitle(x) < simTitle(y) ? -1 : 1; }).forEach(function (id) { var e = document.createElement('option'); e.value = id; e.textContent = simTitle(id); sel.appendChild(e); });
+  });
+  a.onchange = function () { simSetSource(a.value); };
+  b.onchange = function () { simSetTarget(b.value); };
+  $('sim-swap').onclick = function () { var t = sim.sourceNode; sim.sourceNode = sim.targetNode; sim.targetNode = t; simRefresh(); };
+  $('sim-reset').onclick = simReset;
+  $('sim-exit').onclick = function () { simSetActive(false); };
+  $('b-sim').onclick = function () { simSetActive(!sim.active); };
+})();
+
 // ------------------------------------------------------------------ go
 resetPositions(true);
 applyTheme(savedTheme() || SCENE.meta.theme || 'auto', false);
 buildHeader(); buildDiagnostics(); buildFindings(); buildLegend();
 render(); fit();
 ready = true;
-window.__explorer = { palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
+window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
 })();
 </script>
 </body>

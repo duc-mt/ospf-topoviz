@@ -95,6 +95,22 @@ def _end(side, a: str, b: str) -> dict[str, Any] | None:
     return out
 
 
+def _spf_cost(side, one_way: bool) -> int | None:
+    """What the SPF pays to travel one direction of a link; ``None`` when it cannot use that direction.
+
+    Same rules as ``correlation.spf``: a router's outgoing metric as advertised, 0 from a transit network
+    back to a router (the attachment), nothing for a one-way link (the far end does not advertise it back),
+    a direction that no longer exists, or one that was removed since the baseline (drawn, but not live).
+    The page's what-if simulation runs Dijkstra on these numbers, so it never has to guess.
+    """
+    if side is None or one_way or side.status == "removed":
+        return None
+    if side.attrs.get("link_type") == "attachment":
+        return 0
+    metric = side.attrs.get("metric")
+    return metric if isinstance(metric, int) else None
+
+
 def _prefix_index(graph: nx.DiGraph) -> dict[str, list[str]]:
     index: dict[str, list[str]] = {}
     for node, attrs in graph.nodes(data=True):
@@ -117,7 +133,7 @@ def _focus(
     wanted += [
         o.strip() for o in str(data.get("origins") or "").split(",") if o.strip()
     ]
-    for key in ("next_hop_routers", "rib", "spf"):
+    for key in ("next_hop_routers", "rib", "spf", "candidates"):
         value = data.get(key)
         if isinstance(value, list):
             wanted += value
@@ -228,6 +244,10 @@ def build_scene(
                 "unverified": unverified,
                 "state": state,
                 "ends": ends,
+                "spf": {
+                    "ab": _spf_cost(link.ab, one_way),
+                    "ba": _spf_cost(link.ba, one_way),
+                },
                 "metric": min(
                     (e["metric"] for e in ends if isinstance(e.get("metric"), int)),
                     default=None,
@@ -351,6 +371,7 @@ def build_scene(
         "diagnostics": diagnostics,
         "findings": findings,
         "trace": trace_scene,
+        "area_coverage": getattr(diff, "area_coverage", None),
     }
 
 
