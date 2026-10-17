@@ -15,9 +15,7 @@ venv.bak/
 data/*.json
 data/changelog.jsonl
 !data/.gitkeep
-output/*.png
-output/*.jpg
-output/*.svg
+output/*
 !output/.gitkeep
 
 # Sensitive config / credentials
