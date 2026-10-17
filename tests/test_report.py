@@ -48,7 +48,14 @@ def test_render_topology_summary_table_with_diff():
         baseline_available=True,
         added_nodes=[{"label": "10.0.0.1", "type": "router"}],
         removed_nodes=[],
-        added_edges=[{"source_label": "10.0.0.1", "target_label": "10.0.0.2", "metric": 10, "link_type": "point-to-point"}],
+        added_edges=[
+            {
+                "source_label": "10.0.0.1",
+                "target_label": "10.0.0.2",
+                "metric": 10,
+                "link_type": "point-to-point",
+            }
+        ],
         removed_edges=[],
         changed_metrics=[],
     )
@@ -62,9 +69,23 @@ def test_render_diff_table():
         baseline_available=True,
         added_nodes=[{"label": "10.0.0.1", "type": "router"}],
         removed_nodes=[{"label": "10.0.0.2", "type": "router"}],
-        added_edges=[{"source_label": "10.0.0.1", "target_label": "10.0.0.3", "metric": 10, "link_type": "point-to-point"}],
+        added_edges=[
+            {
+                "source_label": "10.0.0.1",
+                "target_label": "10.0.0.3",
+                "metric": 10,
+                "link_type": "point-to-point",
+            }
+        ],
         removed_edges=[],
-        changed_metrics=[{"source_label": "10.0.0.4", "target_label": "10.0.0.5", "old_metric": 10, "new_metric": 20}],
+        changed_metrics=[
+            {
+                "source_label": "10.0.0.4",
+                "target_label": "10.0.0.5",
+                "old_metric": 10,
+                "new_metric": 20,
+            }
+        ],
     )
     out = render_diff_table(diff)
     assert out is not None
@@ -76,7 +97,13 @@ def test_render_diff_table():
 def test_render_quality_table():
     graph = nx.DiGraph()
     graph.graph["adjacency_issues"] = [
-        {"source": "R1", "neighbor": "R2", "interface": "eth0", "state": "Init", "in_lsdb": True}
+        {
+            "source": "R1",
+            "neighbor": "R2",
+            "interface": "eth0",
+            "state": "Init",
+            "in_lsdb": True,
+        }
     ]
     graph.graph["stale_nodes"] = ["R3"]
     graph.add_node("R3", lsa_age=3600)
@@ -101,20 +128,39 @@ def test_render_summary_banner():
 
 
 # ------------------------------------------------------------ seed health table
-def _seed(host, status="SUCCEEDED", duration=2.4, lsas=15, neighbors=4, tags=("Area0", "Core")):
-    return SeedResult(name=host, host=host, device_type="vyos", status=status, duration=duration,
-                      lsas=lsas, neighbors=neighbors, tags=tuple(tags))
+def _seed(
+    host, status="SUCCEEDED", duration=2.4, lsas=15, neighbors=4, tags=("Area0", "Core")
+):
+    return SeedResult(
+        name=host,
+        host=host,
+        device_type="vyos",
+        status=status,
+        duration=duration,
+        lsas=lsas,
+        neighbors=neighbors,
+        tags=tuple(tags),
+    )
 
 
 def test_seed_table_uses_rounded_borders_and_the_agreed_columns():
-    out = render_seed_table([
-        _seed("10.255.255.6"),
-        _seed("10.255.255.10", "TIMEOUT", 10.0, 0, 0, ("Area1", "Edge")),
-    ])
+    out = render_seed_table(
+        [
+            _seed("10.255.255.6"),
+            _seed("10.255.255.10", "TIMEOUT", 10.0, 0, 0, ("Area1", "Edge")),
+        ]
+    )
     lines = out.splitlines()
     assert lines[0].startswith("╭") and lines[0].endswith("╮")
     assert lines[-1].startswith("╰") and lines[-1].endswith("╯")
-    for column in ("SEED ROUTER", "PLATFORM", "STATUS", "DURATION", "LSAS / NBRS", "ROLE"):
+    for column in (
+        "SEED ROUTER",
+        "PLATFORM",
+        "STATUS",
+        "DURATION",
+        "LSAS / NBRS",
+        "ROLE",
+    ):
         assert column in lines[1]
     assert "✔ SUCCEEDED" in out and "✖ TIMEOUT" in out
     assert "2.4s" in out and "10.0s" in out
@@ -147,15 +193,41 @@ _RAW = RawLSDB(router="", network="", source="test", collected_at="2026-10-11")
 def test_banner_reports_how_many_seeds_passed():
     seeds = [_seed("a"), _seed("b"), _seed("c", "TIMEOUT")]
     banner = render_summary_banner(_RAW, _banner_graph(), TopologyDiff(), seeds)
-    assert "Seeds: 2/3 Passed" in banner and "Diffs: 0" in banner and "Nodes: 2" in banner and "Links: 1" in banner
+    assert (
+        "Seeds: 2/3 Passed" in banner
+        and "Diffs: 0" in banner
+        and "Nodes: 2" in banner
+        and "Links: 1" in banner
+    )
     assert "Stable Topology" not in banner
 
 
 def test_banner_counts_a_skipped_fallback_seed_neither_way():
-    banner = render_summary_banner(_RAW, _banner_graph(), TopologyDiff(), [_seed("a"), _seed("b", "SKIPPED")])
+    banner = render_summary_banner(
+        _RAW, _banner_graph(), TopologyDiff(), [_seed("a"), _seed("b", "SKIPPED")]
+    )
     assert "Seeds: 1/1 Passed" in banner
 
 
 def test_banner_still_calls_out_a_suspect_run_when_seeds_are_shown():
     diff = TopologyDiff(suspect_reasons=["1 seed router(s) could not be polled"])
-    assert "Suspect Run" in render_summary_banner(_RAW, _banner_graph(), diff, [_seed("a")])
+    assert "Suspect Run" in render_summary_banner(
+        _RAW, _banner_graph(), diff, [_seed("a")]
+    )
+
+
+def test_render_table_wrapping():
+    headers = ["KIND", "DETAIL"]
+    rows = [
+        [
+            "ECMP LOSS",
+            "10.130.243.0/28: SPF has 2 equal-cost paths, the RIB installs 1 (missing via 10.0.98.1)",
+        ]
+    ]
+    out = render_table(headers, rows, max_col_widths=[None, 40])
+    lines = out.splitlines()
+    assert lines[0].startswith("╭") and lines[-1].startswith("╰")
+    # DETAIL should be wrapped across multiple lines
+    assert any("SPF has 2 equal-cost" in line for line in lines)
+    assert any("RIB installs 1" in line for line in lines)
+    assert len({len(l) for l in lines}) == 1  # uniform table width

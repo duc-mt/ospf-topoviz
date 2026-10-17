@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
+import textwrap
 from typing import Any, Sequence
 
 # ANSI escape codes
@@ -56,14 +58,16 @@ def render_table(
     rows: Sequence[Sequence[str]],
     alignments: Sequence[str] | None = None,
     colors: Sequence[Sequence[str | None]] | None = None,
+    max_col_widths: Sequence[int | None] | None = None,
 ) -> str:
-    """Render a modern grid table with rounded corners.
+    """Render a modern grid table with rounded corners, supporting wrapped multi-line cells.
 
     Args:
         headers: Column titles.
         rows: 2D matrix of cell strings.
         alignments: Optional list of "left" or "right" per column.
         colors: Optional 2D matrix of ANSI colors per cell.
+        max_col_widths: Optional max visible character width per column.
     """
     num_cols = len(headers)
     if num_cols == 0:
@@ -76,7 +80,25 @@ def render_table(
     for row in rows:
         for i, cell in enumerate(row):
             if i < num_cols:
-                widths[i] = max(widths[i], _cell_len(str(cell)))
+                for line in str(cell).split("\n"):
+                    widths[i] = max(widths[i], _cell_len(line))
+
+    # Auto-wrap the last column to fit terminal width if table exceeds it
+    if max_col_widths is None and num_cols > 0:
+        term_cols = shutil.get_terminal_size((0, 0)).columns
+        overhead = 3 * num_cols + 1
+        total_w = sum(widths) + overhead
+        if term_cols and total_w > term_cols:
+            non_last_sum = sum(widths[:-1]) + overhead
+            avail_last = term_cols - non_last_sum
+            target_last = max(avail_last, _cell_len(headers[-1]), 20)
+            if target_last < widths[-1]:
+                max_col_widths = [None] * (num_cols - 1) + [target_last]
+
+    if max_col_widths:
+        for i, max_w in enumerate(max_col_widths):
+            if max_w is not None and i < num_cols:
+                widths[i] = min(widths[i], max(max_w, _cell_len(headers[i])))
 
     def border(left: str, mid: str, right: str) -> str:
         parts = ["─" * (w + 2) for w in widths]
@@ -100,24 +122,44 @@ def render_table(
     # Header separator
     lines.append(border("├", "┼", "┤"))
 
-    # Data rows
+    # Data rows (with multi-line cell wrapping support)
     for r_idx, row in enumerate(rows):
-        row_cells = []
+        col_lines = []
         for c_idx in range(num_cols):
             cell_val = str(row[c_idx]) if c_idx < len(row) else ""
-            color = colors[r_idx][c_idx] if colors and r_idx < len(colors) and c_idx < len(colors[r_idx]) else None
+            target_w = widths[c_idx]
+            sublines = []
+            for raw_line in cell_val.split("\n"):
+                wrapped = textwrap.wrap(raw_line, width=target_w, break_long_words=True)
+                sublines.extend(wrapped if wrapped else [""])
+            col_lines.append(sublines)
 
-            pad_len = widths[c_idx] - _cell_len(cell_val)
-            if alignments[c_idx] == "right":
-                aligned_txt = " " * pad_len + cell_val
-            else:
-                aligned_txt = cell_val + " " * pad_len
+        row_height = max((len(cl) for cl in col_lines), default=1)
+        for line_idx in range(row_height):
+            row_cells = []
+            for c_idx in range(num_cols):
+                line_txt = (
+                    col_lines[c_idx][line_idx]
+                    if line_idx < len(col_lines[c_idx])
+                    else ""
+                )
+                color = (
+                    colors[r_idx][c_idx]
+                    if colors and r_idx < len(colors) and c_idx < len(colors[r_idx])
+                    else None
+                )
 
-            if color and is_color_enabled():
-                aligned_txt = f"{color}{aligned_txt}{ANSI_RESET}"
+                pad_len = widths[c_idx] - _cell_len(line_txt)
+                if alignments[c_idx] == "right":
+                    aligned_txt = " " * pad_len + line_txt
+                else:
+                    aligned_txt = line_txt + " " * pad_len
 
-            row_cells.append(f" {aligned_txt} ")
-        lines.append("│" + "│".join(row_cells) + "│")
+                if color and is_color_enabled():
+                    aligned_txt = f"{color}{aligned_txt}{ANSI_RESET}"
+
+                row_cells.append(f" {aligned_txt} ")
+            lines.append("│" + "│".join(row_cells) + "│")
 
     # Bottom border
     lines.append(border("╰", "┴", "╯"))
@@ -160,7 +202,16 @@ def render_seed_table(seeds: Sequence[Any]) -> str:
         skipped = seed.status == "SKIPPED"
         duration = "-" if skipped else f"{seed.duration:.1f}s"
         counts = "-" if skipped else f"{seed.lsas} / {seed.neighbors} nbrs"
-        rows.append([seed.host, seed.device_type, status_text, duration, counts, seed_role(seed.tags)])
+        rows.append(
+            [
+                seed.host,
+                seed.device_type,
+                status_text,
+                duration,
+                counts,
+                seed_role(seed.tags),
+            ]
+        )
         colors.append([None, None, status_color, None, None, None])
     return render_table(headers, rows, alignments, colors)
 
@@ -171,16 +222,38 @@ def render_topology_summary_table(graph, diff) -> str:
     alignments = ["left", "right", "right", "left", "left"]
 
     # Count nodes by type in current graph
-    current_routers = sum(1 for _, d in graph.nodes(data=True) if d.get("type") == "router")
-    current_networks = sum(1 for _, d in graph.nodes(data=True) if d.get("type") == "network")
+    current_routers = sum(
+        1 for _, d in graph.nodes(data=True) if d.get("type") == "router"
+    )
+    current_networks = sum(
+        1 for _, d in graph.nodes(data=True) if d.get("type") == "network"
+    )
     current_edges = graph.number_of_edges()
 
     if not diff.baseline_available:
         # First run (no baseline available)
         rows = [
-            ["Router Nodes", "-", str(current_routers), f"+{current_routers} nodes", "✔ INITIALIZED"],
-            ["Transit Networks", "-", str(current_networks), f"+{current_networks} nets", "✔ INITIALIZED"],
-            ["Directed Links", "-", str(current_edges), f"+{current_edges} links", "✔ INITIALIZED"],
+            [
+                "Router Nodes",
+                "-",
+                str(current_routers),
+                f"+{current_routers} nodes",
+                "✔ INITIALIZED",
+            ],
+            [
+                "Transit Networks",
+                "-",
+                str(current_networks),
+                f"+{current_networks} nets",
+                "✔ INITIALIZED",
+            ],
+            [
+                "Directed Links",
+                "-",
+                str(current_edges),
+                f"+{current_edges} links",
+                "✔ INITIALIZED",
+            ],
         ]
         colors = [
             [None, None, None, None, ANSI_GREEN],
@@ -219,7 +292,11 @@ def render_topology_summary_table(graph, diff) -> str:
     if num_metrics == 0:
         m_delta_str, m_status, m_color = "0 unchanged", "✔ UNCHANGED", ANSI_GREEN
     else:
-        m_delta_str, m_status, m_color = f"{num_metrics} modified", "⚠ MODIFIED", ANSI_YELLOW
+        m_delta_str, m_status, m_color = (
+            f"{num_metrics} modified",
+            "⚠ MODIFIED",
+            ANSI_YELLOW,
+        )
 
     rows = [
         ["Router Nodes", str(base_r), str(current_routers), r_delta_str, r_status],
@@ -248,12 +325,26 @@ def render_diff_table(diff, max_rows: int = 12) -> str | None:
 
     # Added nodes
     for n in diff.added_nodes:
-        rows.append(["✚ ADD NODE", n.get("label", "?"), f"type: {n.get('type', '?')}", "✚ ADDED"])
+        rows.append(
+            [
+                "✚ ADD NODE",
+                n.get("label", "?"),
+                f"type: {n.get('type', '?')}",
+                "✚ ADDED",
+            ]
+        )
         colors.append([ANSI_CYAN, None, None, ANSI_CYAN])
 
     # Removed nodes
     for n in diff.removed_nodes:
-        rows.append(["✖ REM NODE", n.get("label", "?"), f"type: {n.get('type', '?')}", "✖ REMOVED"])
+        rows.append(
+            [
+                "✖ REM NODE",
+                n.get("label", "?"),
+                f"type: {n.get('type', '?')}",
+                "✖ REMOVED",
+            ]
+        )
         colors.append([ANSI_RED, None, None, ANSI_RED])
 
     # Added edges
@@ -282,13 +373,22 @@ def render_diff_table(diff, max_rows: int = 12) -> str | None:
         overflow = total_changes - max_rows
         rows = rows[:max_rows]
         colors = colors[:max_rows]
-        rows.append(["...", f"+{overflow} more change(s)", "see topology.png for diagram", "➜ TRUNCATED"])
+        rows.append(
+            [
+                "...",
+                f"+{overflow} more change(s)",
+                "see topology.png for diagram",
+                "➜ TRUNCATED",
+            ]
+        )
         colors.append([ANSI_DIM, ANSI_DIM, ANSI_DIM, ANSI_DIM])
 
     return render_table(headers, rows, alignments, colors)
 
 
-def render_quality_table(graph, skip_adjacency: set[tuple[str, str]] | None = None) -> str | None:
+def render_quality_table(
+    graph, skip_adjacency: set[tuple[str, str]] | None = None
+) -> str | None:
     """Render adjacency issues and data quality as a table if any problems exist.
 
     ``skip_adjacency`` holds ``(router, neighbor)`` pairs another table already reports (with more context).
@@ -296,8 +396,11 @@ def render_quality_table(graph, skip_adjacency: set[tuple[str, str]] | None = No
     meta = graph.graph
     stale = meta.get("stale_nodes") or []
     one_way = meta.get("one_way_links") or 0
-    issues = [i for i in (meta.get("adjacency_issues") or [])
-              if (i.get("router"), i.get("neighbor")) not in (skip_adjacency or set())]
+    issues = [
+        i
+        for i in (meta.get("adjacency_issues") or [])
+        if (i.get("router"), i.get("neighbor")) not in (skip_adjacency or set())
+    ]
 
     if not (stale or one_way or issues):
         return None
@@ -311,7 +414,15 @@ def render_quality_table(graph, skip_adjacency: set[tuple[str, str]] | None = No
         where = issue.get("interface") or "-"
         in_lsdb = " (not in LSDB)" if not issue.get("in_lsdb") else ""
         state_txt = f"{issue.get('state', '?')}{in_lsdb}"
-        rows.append([issue.get("source", "?"), issue.get("neighbor", "?"), where, state_txt, "✖ ADJACENCY"])
+        rows.append(
+            [
+                issue.get("source", "?"),
+                issue.get("neighbor", "?"),
+                where,
+                state_txt,
+                "✖ ADJACENCY",
+            ]
+        )
         colors.append([None, None, None, None, ANSI_RED])
 
     for node in stale:
@@ -329,25 +440,51 @@ def render_quality_table(graph, skip_adjacency: set[tuple[str, str]] | None = No
 
 
 # ------------------------------------------------------- cross-check tables
-_SEVERITY_CELL = {"critical": ("✖ CRITICAL", ANSI_RED), "warning": ("⚠ WARNING", ANSI_YELLOW),
-                  "info": ("ℹ INFO", ANSI_DIM)}
-_NEIGHBOR_LABEL = {"ADJ_NOT_FULL": "STATE MISMATCH", "ADJ_MISSING": "MISSING NEIGHBOR", "NBR_NOT_IN_LSDB": "NOT IN LSDB",
-                   "NBR_STATE_CHANGE": "FLAP", "NBR_LOST": "FLAP (LOST)", "NBR_NEW": "NEW NEIGHBOR"}
-_ROUTE_LABEL = {"ROUTE_MISSING": "BLACKHOLE", "NEXTHOP_DOWN": "BLACKHOLE", "ROUTE_STALE": "STALE ROUTE",
-                "RIB_EMPTY": "RIB EMPTY", "ROUTE_OVERRIDDEN": "OVERRIDDEN", "COST_MISMATCH": "SUBOPTIMAL",
-                "NEXTHOP_MISMATCH": "SUBOPTIMAL", "ECMP_MISSING": "ECMP LOSS"}
+_SEVERITY_CELL = {
+    "critical": ("✖ CRITICAL", ANSI_RED),
+    "warning": ("⚠ WARNING", ANSI_YELLOW),
+    "info": ("ℹ INFO", ANSI_DIM),
+}
+_NEIGHBOR_LABEL = {
+    "ADJ_NOT_FULL": "STATE MISMATCH",
+    "ADJ_MISSING": "MISSING NEIGHBOR",
+    "NBR_NOT_IN_LSDB": "NOT IN LSDB",
+    "NBR_STATE_CHANGE": "FLAP",
+    "NBR_LOST": "FLAP (LOST)",
+    "NBR_NEW": "NEW NEIGHBOR",
+}
+_ROUTE_LABEL = {
+    "ROUTE_MISSING": "BLACKHOLE",
+    "NEXTHOP_DOWN": "BLACKHOLE",
+    "ROUTE_STALE": "STALE ROUTE",
+    "RIB_EMPTY": "RIB EMPTY",
+    "ROUTE_OVERRIDDEN": "OVERRIDDEN",
+    "COST_MISMATCH": "SUBOPTIMAL",
+    "NEXTHOP_MISMATCH": "SUBOPTIMAL",
+    "ECMP_MISSING": "ECMP LOSS",
+}
 
 
 def _clip(text: str, width: int = 78) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _findings_table(findings: Sequence[dict], labels: dict[str, str], subject_header: str) -> str:
+def _findings_table(
+    findings: Sequence[dict], labels: dict[str, str], subject_header: str
+) -> str:
     headers = ["SEVERITY", "ROUTER", subject_header, "KIND", "DETAIL"]
     rows, colors = [], []
     for f in findings:
         text, color = _SEVERITY_CELL.get(f["severity"], (f["severity"].upper(), None))
-        rows.append([text, f["router"], f["subject"], labels.get(f["kind"], f["kind"]), _clip(f["message"])])
+        rows.append(
+            [
+                text,
+                f["router"],
+                f["subject"],
+                labels.get(f["kind"], f["kind"]),
+                f["message"],
+            ]
+        )
         colors.append([color, None, None, color, None])
     table = render_table(headers, rows, ["left"] * 5, colors)
     hints = []
@@ -378,11 +515,42 @@ def render_rib_check_table(diff) -> str | None:
         return None
     rows, colors = [], []
     for c in checks:
-        issues = c["expected"] - c["ok"]  # prefixes with a finding: missing from the RIB or deviating from SPF
-        rows.append([c["router"], str(c["routes"]), str(c["expected"]), str(c["ok"]), str(issues), str(c["unverified"])])
-        colors.append([None, None, None, ANSI_GREEN if c["ok"] else None, ANSI_RED if issues else None, ANSI_DIM])
-    return render_table(["ROUTER", "RIB ROUTES", "EXPECTED (SPF)", "CONSISTENT", "DEVIATING", "UNVERIFIED"],
-                        rows, ["left", "right", "right", "right", "right", "right"], colors)
+        issues = (
+            c["expected"] - c["ok"]
+        )  # prefixes with a finding: missing from the RIB or deviating from SPF
+        rows.append(
+            [
+                c["router"],
+                str(c["routes"]),
+                str(c["expected"]),
+                str(c["ok"]),
+                str(issues),
+                str(c["unverified"]),
+            ]
+        )
+        colors.append(
+            [
+                None,
+                None,
+                None,
+                ANSI_GREEN if c["ok"] else None,
+                ANSI_RED if issues else None,
+                ANSI_DIM,
+            ]
+        )
+    return render_table(
+        [
+            "ROUTER",
+            "RIB ROUTES",
+            "EXPECTED (SPF)",
+            "CONSISTENT",
+            "DEVIATING",
+            "UNVERIFIED",
+        ],
+        rows,
+        ["left", "right", "right", "right", "right", "right"],
+        colors,
+    )
 
 
 def finding_counts(diff) -> dict[str, int]:
@@ -399,22 +567,47 @@ def render_trace(trace, graph) -> str:
     def name(node: str) -> str:
         return display_name(node, graph.nodes[node]) if node in graph else node
 
-    lines = [f" Query     : {trace.query}   from router {trace.source}",
-             f" Prefix    : {trace.prefix or '-'}"]
+    lines = [
+        f" Query     : {trace.query}   from router {trace.source}",
+        f" Prefix    : {trace.prefix or '-'}",
+    ]
     if trace.rib:
         r = trace.rib
-        hops = ", ".join(f"{h['ip'] or 'connected'}" + (f" via {h['interface']}" if h["interface"] else "")
-                         + (f" ({h['router']})" if h["router"] else "") for h in r["next_hops"]) or "-"
-        lines.append(f" RIB       : {r['route_type']}, cost {r['metric'] if r['metric'] is not None else '?'}"
-                     + ("" if r["active"] else " (not active)") + f" -> {hops}")
+        hops = (
+            ", ".join(
+                f"{h['ip'] or 'connected'}"
+                + (f" via {h['interface']}" if h["interface"] else "")
+                + (f" ({h['router']})" if h["router"] else "")
+                for h in r["next_hops"]
+            )
+            or "-"
+        )
+        lines.append(
+            f" RIB       : {r['route_type']}, cost {r['metric'] if r['metric'] is not None else '?'}"
+            + ("" if r["active"] else " (not active)")
+            + f" -> {hops}"
+        )
     else:
         lines.append(" RIB       : no matching OSPF route")
     if trace.origins:
-        lines.append(" Origin    : " + ", ".join(
-            f"{name(o['node'])} ({o['kind']}, area {o['area']})" for o in trace.origins))
-    lines.append(f" SPF cost  : {trace.spf_cost if trace.spf_cost is not None else '-'}")
+        lines.append(
+            " Origin    : "
+            + ", ".join(
+                f"{name(o['node'])} ({o['kind']}, area {o['area']})"
+                for o in trace.origins
+            )
+        )
+    lines.append(
+        f" SPF cost  : {trace.spf_cost if trace.spf_cost is not None else '-'}"
+    )
     ok = trace.verdict == "RIB and LSDB agree"
-    lines.append(" Verdict   : " + colorize(("✔ " if ok else "⚠ ") + (trace.verdict or "-"), ANSI_GREEN if ok else ANSI_YELLOW))
+    lines.append(
+        " Verdict   : "
+        + colorize(
+            ("✔ " if ok else "⚠ ") + (trace.verdict or "-"),
+            ANSI_GREEN if ok else ANSI_YELLOW,
+        )
+    )
     for note in trace.notes:
         lines.append(f" Note      : {note}")
     out = "\n".join(lines)
@@ -425,26 +618,50 @@ def render_trace(trace, graph) -> str:
             edge = graph.edges[u, v]
             cost = edge.get("metric", 0)
             total += cost
-            link = edge.get("interface") or edge.get("interface_address") or ("segment" if v.startswith("net-") else "-")
+            link = (
+                edge.get("interface")
+                or edge.get("interface_address")
+                or ("segment" if v.startswith("net-") else "-")
+            )
             rows.append([str(step), name(v), str(link), str(cost), str(total)])
         if trace.origins and trace.origins[0]["kind"] == "stub":
             stub = next((o for o in trace.origins if o["node"] == path[-1]), None)
             if stub:
                 total += stub["metric"]
-                rows.append([str(len(path)), trace.prefix or "-", "stub", str(stub["metric"]), str(total)])
-        out += f"\n\n Path {number} of {min(len(trace.paths), 4)}" + (" (equal cost)" if len(trace.paths) > 1 else "") + ":\n"
-        out += render_table(["HOP", "NODE", "LINK (OUT INTERFACE)", "COST", "TOTAL"], rows,
-                            ["right", "left", "left", "right", "right"])
+                rows.append(
+                    [
+                        str(len(path)),
+                        trace.prefix or "-",
+                        "stub",
+                        str(stub["metric"]),
+                        str(total),
+                    ]
+                )
+        out += (
+            f"\n\n Path {number} of {min(len(trace.paths), 4)}"
+            + (" (equal cost)" if len(trace.paths) > 1 else "")
+            + ":\n"
+        )
+        out += render_table(
+            ["HOP", "NODE", "LINK (OUT INTERFACE)", "COST", "TOTAL"],
+            rows,
+            ["right", "left", "left", "right", "right"],
+        )
     return out
 
 
 def _findings_badge(diff) -> str:
     """``│ Findings: 1 critical, 2 warning`` when the cross-checks found anything, else nothing."""
     counts = finding_counts(diff)
-    shown = [f"{counts[sev]} {sev}" for sev in ("critical", "warning") if counts.get(sev)]
+    shown = [
+        f"{counts[sev]} {sev}" for sev in ("critical", "warning") if counts.get(sev)
+    ]
     if not shown:
         return ""
-    return "  │  " + colorize("Findings: " + ", ".join(shown), ANSI_RED if counts.get("critical") else ANSI_YELLOW)
+    return "  │  " + colorize(
+        "Findings: " + ", ".join(shown),
+        ANSI_RED if counts.get("critical") else ANSI_YELLOW,
+    )
 
 
 def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) -> str:
@@ -457,10 +674,18 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
     num_nodes = graph.number_of_nodes()
     num_edges = graph.number_of_edges()
 
-    total_diffs = len(diff.added_nodes) + len(diff.removed_nodes) + len(diff.added_edges) + len(diff.removed_edges) + len(diff.changed_metrics)
+    total_diffs = (
+        len(diff.added_nodes)
+        + len(diff.removed_nodes)
+        + len(diff.added_edges)
+        + len(diff.removed_edges)
+        + len(diff.changed_metrics)
+    )
     diff_badge = f"Diffs: {total_diffs}"
     if total_diffs > 0:
-        diff_badge = colorize(diff_badge, ANSI_YELLOW if not diff.suspect_reasons else ANSI_RED)
+        diff_badge = colorize(
+            diff_badge, ANSI_YELLOW if not diff.suspect_reasons else ANSI_RED
+        )
     else:
         diff_badge = colorize(diff_badge, ANSI_GREEN)
 
@@ -471,10 +696,14 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
             status_badge = colorize("⚠ Changes Detected", ANSI_YELLOW)
         else:
             status_badge = colorize("✔ Stable Topology", ANSI_GREEN)
-        return (f"  {status_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
-                + _findings_badge(diff))
+        return (
+            f"  {status_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+            + _findings_badge(diff)
+        )
 
-    polled = [s for s in seeds if s.status != "SKIPPED"]  # a seed that was never needed is neither pass nor fail
+    polled = [
+        s for s in seeds if s.status != "SKIPPED"
+    ]  # a seed that was never needed is neither pass nor fail
     passed = sum(1 for s in polled if s.status == "SUCCEEDED")
     if passed == len(polled):
         seed_badge = colorize(f"✔ Seeds: {passed}/{len(polled)} Passed", ANSI_GREEN)
@@ -482,7 +711,9 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
         seed_badge = colorize(f"⚠ Seeds: {passed}/{len(polled)} Passed", ANSI_YELLOW)
     else:
         seed_badge = colorize(f"✖ Seeds: {passed}/{len(polled)} Passed", ANSI_RED)
-    line = f"  {seed_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+    line = (
+        f"  {seed_badge}  │  {diff_badge}  │  Nodes: {num_nodes}  │  Links: {num_edges}"
+    )
     if diff.suspect_reasons:
         line += "  │  " + colorize("✖ Suspect Run", ANSI_RED)
     return line + _findings_badge(diff)
