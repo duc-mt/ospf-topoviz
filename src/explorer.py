@@ -282,6 +282,11 @@ def build_scene(
         "stale": [n for n, info in scene_nodes.items() if info["stale"]],
         "adjacency": issues,
         "suspect": list(diff.suspect_reasons),
+        # LSAs at (or near) MaxAge: left out of the topology on purpose, listed here for information only
+        "flushing": [
+            {k: e.get(k) for k in ("type", "id", "area", "age", "dr", "prefixes")}
+            for e in meta_graph.get("flushing_lsas") or []
+        ],
         "changes": {
             "baseline": bool(diff.baseline_available),
             "addedNodes": [n["id"] for n in diff.added_nodes],
@@ -321,6 +326,9 @@ def build_scene(
             "version": __version__,
             "generated": generated or datetime.now(UTC).isoformat(timespec="seconds"),
             "scope": scope,
+            "theme": options.theme
+            if options.theme_explicit
+            else "auto",  # starting theme; a saved choice wins
             "routers": routers,
             "networks": len(scene_nodes) - routers,
             "links": len(scene_links),
@@ -356,7 +364,16 @@ def render_html(scene: dict[str, Any]) -> str:
     )
     title = html.escape(f"OSPF Topology Explorer - {scene['meta']['routers']} routers")
     page = TEMPLATE.read_text(encoding="utf-8")
-    return page.replace("__TITLE__", title).replace("/*__SCENE__*/null", payload)
+    theme = (
+        scene["meta"].get("theme")
+        if scene["meta"].get("theme") in ("auto", "light", "dark")
+        else "auto"
+    )
+    return (
+        page.replace("__TITLE__", title)
+        .replace("__THEME__", theme)
+        .replace("/*__SCENE__*/null", payload)
+    )
 
 
 def write_explorer(

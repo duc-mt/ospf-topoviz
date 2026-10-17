@@ -640,13 +640,18 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", e.data)
     monkeypatch.setattr("src.poller.ConnectHandler", e.network)
 
+    real_render = main.TopologyVisualizer.render
+
     def render(
         self, graph, diff, highlight=None, **_kw
     ):  # no Graphviz binary needed: keep the DOT source for inspection
+        if self.interactive:
+            return real_render(self, graph, diff, highlight, **_kw)
         e.rendered.append(self.build_digraph(graph, diff).source)
         return tmp_path / "topology.png"
 
     monkeypatch.setattr(main.TopologyVisualizer, "render", render)
+
 
     def write_config(seeds=None, **top):
         settings = {

@@ -70,7 +70,9 @@ def load_settings(path: str | os.PathLike, required: bool = True) -> dict[str, A
                 shutil.copyfile(example_path, path)
                 logger.info("Created %s from %s", path, example_path.name)
             except OSError as exc:
-                logger.warning("Could not copy %s to %s: %s", example_path.name, path.name, exc)
+                logger.warning(
+                    "Could not copy %s to %s: %s", example_path.name, path.name, exc
+                )
 
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -116,9 +118,36 @@ def stale_lsa_age(settings: dict[str, Any], default: int) -> int:
     try:
         value = int(section.get("stale_lsa_age", default))
     except (TypeError, ValueError) as exc:
-        raise ConfigError(f"data_quality.stale_lsa_age must be a whole number of seconds ({exc})") from exc
+        raise ConfigError(
+            f"data_quality.stale_lsa_age must be a whole number of seconds ({exc})"
+        ) from exc
     if value < 0:
         raise ConfigError("data_quality.stale_lsa_age must not be negative")
+    return value
+
+
+def maxage_lsa_age(settings: dict[str, Any], default: int) -> int:
+    """``data_quality.maxage_lsa_age`` in seconds: LSAs this old are ignored (0 switches the filter off).
+
+    An LSA is flushed when it reaches MaxAge (3600 s); ones close to it are leftovers (typically the
+    old DR's Network LSA after a re-election) and are not live topology.
+
+    Raises:
+        ConfigError: If it is not a whole number between 0 and 3600.
+    """
+    section = settings.get("data_quality") or {}
+    if not isinstance(section, dict):
+        raise ConfigError("'data_quality' in settings.yaml must be a mapping")
+    try:
+        value = int(section.get("maxage_lsa_age", default))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"data_quality.maxage_lsa_age must be a whole number of seconds ({exc})"
+        ) from exc
+    if not 0 <= value <= 3600:
+        raise ConfigError(
+            "data_quality.maxage_lsa_age must be between 0 (off) and 3600 (MaxAge)"
+        )
     return value
 
 
@@ -127,8 +156,17 @@ SEED_MODES = ("merge", "fallback")
 
 #: Per-router settings a ``seeds:`` block may also state once for every device in it.
 _SHARED_KEYS = (
-    "device_type", "username", "password", "secret", "port", "ospf_process_id",
-    "conn_timeout", "auth_timeout", "banner_timeout", "read_timeout", "commands",
+    "device_type",
+    "username",
+    "password",
+    "secret",
+    "port",
+    "ospf_process_id",
+    "conn_timeout",
+    "auth_timeout",
+    "banner_timeout",
+    "read_timeout",
+    "commands",
 )
 _TIMEOUT_KEYS = ("conn_timeout", "auth_timeout", "banner_timeout")
 _HOST = re.compile(r"^[A-Za-z0-9_.:-]{1,253}$")
@@ -141,10 +179,14 @@ class SeedsOptions:
     mode: str = "merge"  # merge = poll all seeds and combine; fallback = first seed that answers
     concurrency: int = 5  # SSH sessions at the same time in merge mode
     timeout_per_device: int = 10  # seconds per connection stage (TCP, banner, auth) unless a device sets its own
-    require_all: bool = False  # merge mode: abort instead of continuing when any seed fails
+    require_all: bool = (
+        False  # merge mode: abort instead of continuing when any seed fails
+    )
 
     @classmethod
-    def from_settings(cls, settings: dict[str, Any], mode: str | None = None) -> SeedsOptions:
+    def from_settings(
+        cls, settings: dict[str, Any], mode: str | None = None
+    ) -> SeedsOptions:
         """Read ``seeds:`` (all keys optional); ``mode`` is the ``--mode`` override.
 
         Raises:
@@ -157,16 +199,22 @@ class SeedsOptions:
             raise ConfigError("'seeds' in settings.yaml must be a mapping")
         chosen = str(mode or section.get("mode") or cls.mode).strip().lower()
         if chosen not in SEED_MODES:
-            raise ConfigError(f"seeds.mode {chosen!r} is invalid: use one of {', '.join(SEED_MODES)}")
+            raise ConfigError(
+                f"seeds.mode {chosen!r} is invalid: use one of {', '.join(SEED_MODES)}"
+            )
         try:
             opts = cls(
                 mode=chosen,
                 concurrency=int(section.get("concurrency", cls.concurrency)),
-                timeout_per_device=int(section.get("timeout_per_device", cls.timeout_per_device)),
+                timeout_per_device=int(
+                    section.get("timeout_per_device", cls.timeout_per_device)
+                ),
                 require_all=bool(section.get("require_all", cls.require_all)),
             )
         except (TypeError, ValueError) as exc:
-            raise ConfigError(f"seeds.concurrency and seeds.timeout_per_device must be integers ({exc})") from exc
+            raise ConfigError(
+                f"seeds.concurrency and seeds.timeout_per_device must be integers ({exc})"
+            ) from exc
         if opts.concurrency < 1:
             raise ConfigError("seeds.concurrency must be 1 or greater")
         if opts.timeout_per_device < 1:
@@ -186,7 +234,9 @@ def parse_seed_hosts(text: str | None) -> list[str]:
         if not host:
             continue
         if not _HOST.match(host):
-            raise ConfigError(f"--seeds: {host!r} is not a valid host name or IP address")
+            raise ConfigError(
+                f"--seeds: {host!r} is not a valid host name or IP address"
+            )
         if host not in hosts:
             hosts.append(host)
     return hosts
@@ -250,7 +300,9 @@ def device_entries(
     # --- legacy single device: one router, unchanged behaviour -----------------------------------
     if not configured and not hosts:
         if not legacy:
-            raise ConfigError(f"{source} must contain a 'seeds' block (seeds.devices) or a 'device' mapping")
+            raise ConfigError(
+                f"{source} must contain a 'seeds' block (seeds.devices) or a 'device' mapping"
+            )
         entry = dict(legacy)
         entry["_legacy"] = True
         if device_type:
@@ -260,7 +312,10 @@ def device_entries(
         return [entry]
 
     shared = {k: seeds[k] for k in _SHARED_KEYS if not _blank(seeds.get(k))}
-    template = {**{k: legacy[k] for k in _SHARED_KEYS if not _blank(legacy.get(k))}, **shared}
+    template = {
+        **{k: legacy[k] for k in _SHARED_KEYS if not _blank(legacy.get(k))},
+        **shared,
+    }
     options = SeedsOptions.from_settings(settings)
 
     own: list[dict[str, Any]] = []
@@ -271,19 +326,27 @@ def device_entries(
             raise ConfigError(f"{source}: seeds.devices[{position}] has no 'host'")
         host = str(item["host"]).strip()
         if not _HOST.match(host):
-            raise ConfigError(f"{source}: seeds.devices[{position}]: {host!r} is not a valid host name or IP address")
+            raise ConfigError(
+                f"{source}: seeds.devices[{position}]: {host!r} is not a valid host name or IP address"
+            )
         entry = {**item, "host": host}
         try:
-            entry["priority"] = int(item["priority"]) if not _blank(item.get("priority")) else position
+            entry["priority"] = (
+                int(item["priority"]) if not _blank(item.get("priority")) else position
+            )
         except (TypeError, ValueError) as exc:
-            raise ConfigError(f"{source}: seed {host}: priority must be an integer ({exc})") from exc
+            raise ConfigError(
+                f"{source}: seed {host}: priority must be an integer ({exc})"
+            ) from exc
         entry["tags"] = _tags(item.get("tags"), f"{source}: seed {host}")
         own.append(entry)
 
     seen: set[str] = set()
     for entry in own:
         if entry["host"] in seen:
-            raise ConfigError(f"{source}: seed {entry['host']} is listed more than once")
+            raise ConfigError(
+                f"{source}: seed {entry['host']} is listed more than once"
+            )
         seen.add(entry["host"])
 
     if hosts:  # --seeds: the command line decides which routers run, and in which order
@@ -297,7 +360,10 @@ def device_entries(
     resolved: list[dict[str, Any]] = []
     for entry in own:
         out = dict(entry)
-        for key, env_name in ENV_OVERRIDES.items():  # own value > environment > shared > legacy
+        for (
+            key,
+            env_name,
+        ) in ENV_OVERRIDES.items():  # own value > environment > shared > legacy
             if _blank(out.get(key)):
                 out[key] = os.environ.get(env_name) or template.get(key)
         for key in _SHARED_KEYS:

@@ -89,7 +89,9 @@ ospf_process_id: null
 
 # Data Quality thresholds
 data_quality:
-  stale_lsa_age: 3600        # seconds (1 hour); LSAs older than this are flagged as stale
+  stale_lsa_age: 2400        # seconds; an LSA older than this that is still in the database is flagged as stale
+  maxage_lsa_age: 3500       # seconds; LSAs this old are being flushed (MaxAge is 3600) and are ignored altogether,
+                             #   e.g. the old DR's Network LSA after a re-election. 0 = off. Keep it above stale_lsa_age
 
 # Guard settings (protects baseline against partial LSDB runs)
 guard:
@@ -97,6 +99,8 @@ guard:
 
 # Visualization settings
 visualization:
+  # theme: light             # light | dark: colours of the Graphviz picture (--theme overrides). The HTML
+                             #   explorer has its own auto / light / dark switch; this only sets where it starts
   direction: LR              # LR (Left to Right) or TB (Top to Bottom)
   show_costs: true
   show_addresses: true

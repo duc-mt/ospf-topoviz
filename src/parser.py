@@ -46,6 +46,12 @@ logger = logging.getLogger(__name__)
 #: (LSRefreshTime = 1800 s); the margin covers pacing delays such as Cisco's 240 s LSA-group pacing.
 DEFAULT_STALE_AGE = 2400
 
+#: LSAs this old are about to be flushed (MaxAge is 3600 s) and are left out of the topology: RFC 2328
+#: section 16 does not use MaxAge LSAs in the routing calculation, and the leftover Network LSA of a
+#: Designated Router that has just been replaced sits in the database at exactly this age until it is
+#: flushed. Counting it as a live node only produces "stale", "one-way" and "split" false alarms.
+DEFAULT_MAXAGE_IGNORE_AGE = 3500
+
 _EDGE_TYPE = {
     KIND_P2P: "point-to-point",
     KIND_TRANSIT: "transit",
@@ -68,7 +74,9 @@ def _area_key(area: str) -> str:
     return text
 
 
-def _is_newer(candidate: RouterLsa | NetworkLsa, current: RouterLsa | NetworkLsa) -> bool:
+def _is_newer(
+    candidate: RouterLsa | NetworkLsa, current: RouterLsa | NetworkLsa
+) -> bool:
     """True if ``candidate`` is a more recent instance of the same LSA than ``current``.
 
     Follows RFC 2328 section 13.1 as far as this data allows: the higher (signed) sequence number wins.
@@ -135,7 +143,9 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
     )
     logger.info(
         "Merged %d LSDB(s): %d router + %d network LSAs (%d duplicate(s) collapsed)",
-        len(lsdbs), len(merged.router_lsas), len(merged.network_lsas),
+        len(lsdbs),
+        len(merged.router_lsas),
+        len(merged.network_lsas),
         seen - len(merged.router_lsas) - len(merged.network_lsas),
     )
     return merged
@@ -210,6 +220,7 @@ class OSPFParser(BaseParser):
         metadata: dict[str, Any] | None = None,
         details: Sequence[SourceDetail] | None = None,
         stale_age: int = DEFAULT_STALE_AGE,
+        maxage_age: int = DEFAULT_MAXAGE_IGNORE_AGE,
     ) -> dict[str, Any]:
         """Flatten a (possibly merged) neutral LSA model into nodes and edges.
 
@@ -225,13 +236,22 @@ class OSPFParser(BaseParser):
             metadata: Extra entries for the result's ``metadata`` block (device type, sources, ...).
             details: Per-router neighbour tables (see ``SourceDetail``).
             stale_age: Age in seconds from which an LSA counts as stale (0 switches the check off).
+            maxage_age: Age in seconds from which an LSA counts as being flushed and is ignored altogether
+                (0 switches the filter off). The links and attachments that point at such an LSA are
+                ignored with it, as OSPF's own SPF does. What was left out is listed in the metadata
+                (``flushing_lsas``) so it can be shown as information.
         """
+        router_lsas, network_lsas, flushing, dead_nets, dead_routers = (
+            cls._split_flushing(lsdb, maxage_age)
+        )
         nodes: dict[str, dict] = {}
         edges: dict[tuple[str, str], dict] = {}
-        described: set[tuple[str, str]] = set()  # (node ID, area) pairs that have an LSA of their own
+        described: set[tuple[str, str]] = (
+            set()
+        )  # (node ID, area) pairs that have an LSA of their own
 
         # Type 1: routers and the links they advertise.
-        for lsa in lsdb.router_lsas:
+        for lsa in router_lsas:
             cls._upsert_node(nodes, lsa.router_id, "router", lsa.area, resolved=True)
             node = nodes[lsa.router_id]
             described.add((lsa.router_id, lsa.area))
@@ -241,12 +261,14 @@ class OSPFParser(BaseParser):
                 node["asbr"] = True
             cls._note_age(node, lsa.age)
             for link in lsa.links:
+                if cls._points_at_flushing(link, lsa.area, dead_nets, dead_routers):
+                    continue
                 if link.kind == KIND_STUB:
                     cls._note_stub(node, link, lsa.area)
                 cls._add_router_link(nodes, edges, lsa.router_id, link, lsa.area)
 
         # Type 2: transit networks (the DR originates one per segment).
-        for lsa in lsdb.network_lsas:
+        for lsa in network_lsas:
             mask = dotted_mask(lsa.mask)
             net_id = network_node_id(lsa.address)
             cls._upsert_node(
@@ -263,6 +285,8 @@ class OSPFParser(BaseParser):
             described.add((net_id, lsa.area))
             cls._note_age(nodes[net_id], lsa.age)
             for attached in lsa.attached:
+                if attached in dead_routers:
+                    continue
                 cls._upsert_node(nodes, attached, "router", lsa.area)
                 cls._add_edge(edges, net_id, attached, 0, "attachment", lsa.area)
 
@@ -291,10 +315,12 @@ class OSPFParser(BaseParser):
             "device_type": cls.__name__,
             "ospf_process_ids": lsdb.process_ids,
             "areas": sorted({a for n in nodes.values() for a in n["areas"]}),
-            "router_lsas": len(lsdb.router_lsas),
-            "network_lsas": len(lsdb.network_lsas),
+            "router_lsas": len(router_lsas),
+            "network_lsas": len(network_lsas),
             "parsed_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "stale_lsa_age": stale_age,
+            "maxage_ignore_age": maxage_age,
+            "flushing_lsas": flushing,
             "stale_nodes": sorted(stale, key=node_sort_key),
             "one_way_links": one_way,
             "unverified_links": unverified,
@@ -315,6 +341,98 @@ class OSPFParser(BaseParser):
             ],
         }
 
+    @classmethod
+    def _split_flushing(
+        cls, lsdb: Lsdb, limit: int
+    ) -> tuple[
+        list[RouterLsa], list[NetworkLsa], list[dict], set[tuple[str, str]], set[str]
+    ]:
+        """Separate the LSAs that are about to be flushed (age ``limit`` or more) from the live ones.
+
+        Returns the live router and network LSAs, a description of what was left out, the Network
+        LSAs ``(node ID, area)`` and the routers that have *no* live LSA left (their links and
+        attachments are ignored too, just as SPF ignores links to a MaxAge LSA).
+        """
+        if not limit:
+            return lsdb.router_lsas, lsdb.network_lsas, [], set(), set()
+
+        def expiring(lsa) -> bool:
+            return lsa.age is not None and lsa.age >= limit
+
+        live_r = [lsa for lsa in lsdb.router_lsas if not expiring(lsa)]
+        live_n = [lsa for lsa in lsdb.network_lsas if not expiring(lsa)]
+        live_routers = {lsa.router_id for lsa in live_r}
+        live_nets = {(network_node_id(lsa.address), lsa.area) for lsa in live_n}
+        left_out: list[dict] = []
+        dead_routers: set[str] = set()
+        dead_nets: set[tuple[str, str]] = set()
+        for lsa in lsdb.router_lsas:
+            if not expiring(lsa):
+                continue
+            prefixes = sorted(
+                {
+                    p
+                    for link in lsa.links
+                    if link.kind == KIND_STUB
+                    and (p := cls._prefix(link.link_id, dotted_mask(link.link_data)))
+                }
+            )
+            left_out.append(
+                {
+                    "type": "router",
+                    "id": lsa.router_id,
+                    "area": lsa.area,
+                    "age": lsa.age,
+                    "prefixes": prefixes,
+                }
+            )
+            if lsa.router_id not in live_routers:
+                dead_routers.add(lsa.router_id)
+        for lsa in lsdb.network_lsas:
+            if not expiring(lsa):
+                continue
+            key = (network_node_id(lsa.address), lsa.area)
+            prefix = cls._prefix(lsa.address, dotted_mask(lsa.mask))
+            left_out.append(
+                {
+                    "type": "network",
+                    "id": key[0],
+                    "area": lsa.area,
+                    "age": lsa.age,
+                    "dr": lsa.dr,
+                    "prefixes": [prefix] if prefix else [],
+                }
+            )
+            if key not in live_nets:
+                dead_nets.add(key)
+        left_out.sort(key=lambda e: (e["type"], node_sort_key(e["id"]), e["area"]))
+        if left_out:
+            logger.info(
+                "Ignoring %d LSA(s) at age >= %d s (being flushed from the database)",
+                len(left_out),
+                limit,
+            )
+            for entry in left_out:
+                logger.debug(
+                    "  ignored %s LSA %s (area %s, age %s s)",
+                    entry["type"],
+                    entry["id"],
+                    entry["area"],
+                    entry["age"],
+                )
+        return live_r, live_n, left_out, dead_nets, dead_routers
+
+    @staticmethod
+    def _points_at_flushing(
+        link, area: str, dead_nets: set[tuple[str, str]], dead_routers: set[str]
+    ) -> bool:
+        """True if a router's link leads to an LSA that is being flushed (OSPF's SPF skips such links)."""
+        if link.kind == KIND_TRANSIT:
+            return (network_node_id(link.link_id), area) in dead_nets
+        if link.kind in (KIND_P2P, KIND_VIRTUAL):
+            return link.link_id in dead_routers
+        return False
+
     def _build(self, lsdb: Lsdb) -> dict[str, Any]:
         """Flatten the neutral LSA model into nodes and edges (backward compatibility)."""
         return self.build_topology(lsdb, {"device_type": self.device_type})
@@ -323,10 +441,14 @@ class OSPFParser(BaseParser):
     def _note_age(node: dict, age: int | None) -> None:
         """Keep the youngest LSA age of a node (a router in several areas has several LSAs)."""
         if age is not None:
-            node["lsa_age"] = age if "lsa_age" not in node else min(node["lsa_age"], age)
+            node["lsa_age"] = (
+                age if "lsa_age" not in node else min(node["lsa_age"], age)
+            )
 
     @staticmethod
-    def _check_two_way(nodes: dict, edges: dict, described: set[tuple[str, str]]) -> tuple[int, int]:
+    def _check_two_way(
+        nodes: dict, edges: dict, described: set[tuple[str, str]]
+    ) -> tuple[int, int]:
         """Mark links the far end does not advertise back (OSPF's SPF ignores such links).
 
         A missing reverse link is only evidence of a problem if the far end *has* an LSA in the same
@@ -349,41 +471,80 @@ class OSPFParser(BaseParser):
     @staticmethod
     def _is_adjacency_problem(neighbor) -> bool:
         """Anything short of Full is a problem, except 2-Way between two DROthers (that is normal)."""
-        return neighbor.state != "Full" and not (neighbor.state == "2-Way" and neighbor.role == "DROther")
+        return neighbor.state != "Full" and not (
+            neighbor.state == "2-Way" and neighbor.role == "DROther"
+        )
 
     @classmethod
-    def _apply_details(cls, nodes: dict, edges: dict, details: list[SourceDetail]) -> list[dict]:
+    def _apply_details(
+        cls, nodes: dict, edges: dict, details: list[SourceDetail]
+    ) -> list[dict]:
         """Use each router's own neighbour table: name the interface of every link, list unhealthy adjacencies."""
         issues: list[dict] = []
         for detail in details:
             router = detail.router_id
             if not router or router not in nodes:
                 if detail.neighbors:
-                    logger.warning("%s: cannot tell which node in the topology this router is (router ID %s); "
-                                   "its neighbour table is ignored", detail.name, router or "unknown")
+                    logger.warning(
+                        "%s: cannot tell which node in the topology this router is (router ID %s); "
+                        "its neighbour table is ignored",
+                        detail.name,
+                        router or "unknown",
+                    )
                 continue
-            segments = [b for (a, b) in edges if a == router and nodes[b]["type"] == "network"]
+            segments = [
+                b for (a, b) in edges if a == router and nodes[b]["type"] == "network"
+            ]
             for nbr in detail.neighbors:
                 if nbr.interface:
-                    if (router, nbr.router_id) in edges and nodes[nbr.router_id]["type"] == "router":
+                    if (router, nbr.router_id) in edges and nodes[nbr.router_id][
+                        "type"
+                    ] == "router":
                         link = (router, nbr.router_id)  # point-to-point
                     else:  # a shared segment: the router's link to a network that the neighbour is attached to
-                        link = next(((router, seg) for seg in segments if (seg, nbr.router_id) in edges), None)
+                        link = next(
+                            (
+                                (router, seg)
+                                for seg in segments
+                                if (seg, nbr.router_id) in edges
+                            ),
+                            None,
+                        )
                     if link is not None:
                         edges[link].setdefault("interface", nbr.interface)
                 # Colour the link by its adjacency; on a shared segment the worst neighbour decides.
-                shared = (router, nbr.router_id) if (router, nbr.router_id) in edges else next(
-                    ((router, seg) for seg in segments if (seg, nbr.router_id) in edges), None)
+                shared = (
+                    (router, nbr.router_id)
+                    if (router, nbr.router_id) in edges
+                    else next(
+                        (
+                            (router, seg)
+                            for seg in segments
+                            if (seg, nbr.router_id) in edges
+                        ),
+                        None,
+                    )
+                )
                 if shared is not None:
                     current = edges[shared].get("nbr_state")
-                    if current is None or state_severity(nbr.state) > state_severity(current):
+                    if current is None or state_severity(nbr.state) > state_severity(
+                        current
+                    ):
                         edges[shared]["nbr_state"] = nbr.state
                 if cls._is_adjacency_problem(nbr):
-                    issues.append({
-                        "router": router, "neighbor": nbr.router_id, "state": nbr.state, "role": nbr.role,
-                        "interface": nbr.interface, "address": nbr.address, "source": detail.name,
-                        "in_lsdb": nbr.router_id in nodes and nodes[nbr.router_id]["resolved"],
-                    })
+                    issues.append(
+                        {
+                            "router": router,
+                            "neighbor": nbr.router_id,
+                            "state": nbr.state,
+                            "role": nbr.role,
+                            "interface": nbr.interface,
+                            "address": nbr.address,
+                            "source": detail.name,
+                            "in_lsdb": nbr.router_id in nodes
+                            and nodes[nbr.router_id]["resolved"],
+                        }
+                    )
         return issues
 
     @classmethod
@@ -405,12 +566,26 @@ class OSPFParser(BaseParser):
             if not detail.router_id:
                 continue
             for nbr in detail.neighbors:
-                rows.append({
-                    "router": detail.router_id, "neighbor": nbr.router_id, "state": nbr.state,
-                    "role": nbr.role, "interface": nbr.interface, "address": nbr.address,
-                    "priority": nbr.priority, "dead_time": nbr.dead_time, "source": detail.name,
-                })
-        rows.sort(key=lambda r: (node_sort_key(r["router"]), node_sort_key(r["neighbor"]), r["interface"] or ""))
+                rows.append(
+                    {
+                        "router": detail.router_id,
+                        "neighbor": nbr.router_id,
+                        "state": nbr.state,
+                        "role": nbr.role,
+                        "interface": nbr.interface,
+                        "address": nbr.address,
+                        "priority": nbr.priority,
+                        "dead_time": nbr.dead_time,
+                        "source": detail.name,
+                    }
+                )
+        rows.sort(
+            key=lambda r: (
+                node_sort_key(r["router"]),
+                node_sort_key(r["neighbor"]),
+                r["interface"] or "",
+            )
+        )
         return rows
 
     @classmethod

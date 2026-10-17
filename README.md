@@ -124,6 +124,13 @@ polling:
   neighbors: true          # also read each router's OSPF neighbour table
   routes: true             # also read each router's OSPF routing table (for the SPF-vs-RIB check)
 
+data_quality:
+  stale_lsa_age: 2400      # seconds: older than this and still in the database -> flagged stale
+  maxage_lsa_age: 3500     # seconds: LSAs this old are being flushed and are ignored (0 = off)
+
+visualization:
+  theme: light             # light | dark: the Graphviz picture (the explorer starts in "auto")
+
 ospf_process_id: 1         # omit for platforms without process IDs (JunOS, VyOS)
 
 guard:
@@ -160,6 +167,24 @@ visualization:             # every key optional; these are the defaults
 
 **Existing configs keep working.** Without `seeds.devices` the single `device:` block is polled exactly as before.
 
+### What is not an alarm
+
+A healthy network can look broken for a while after a change. Three rules keep that from turning into noise.
+
+**LSAs about to be flushed are left out.** After a Designated Router is re-elected, the old DR's Type-2 Network LSA stays in the database, ageing, until it reaches MaxAge (3600 s) and is flushed - OSPF's own SPF does not use an LSA at MaxAge. Counting it as a live node produced a "stale" network, a ring of one-way links and a topology "split" that were never there. Router and Network LSAs of age `data_quality.maxage_lsa_age` (default **3500 s**) or more are therefore ignored, together with the links and attachments that point at them, so no ghost "(no LSA)" network appears in their place. What was left out is listed as information (a line in the console summary, the diagram title and an *about to age out* card in the explorer) and the filter can be switched off with `0`. An LSA that is old but below the limit (see `stale_lsa_age`) is still flagged stale.
+
+**A next hop is matched to its router through its interface address.** A routing table names a next hop by the neighbour's IP on the shared link; the topology is made of router IDs. The address is looked up in the polled router's own neighbour table (first-hand: the neighbour's ID and address from its Hellos), then in the link data of the Router LSAs (each router's own interface address on each link), then in the other routers' neighbour tables, then among the router IDs, and finally by the segment it sits on (a transit network, or a point-to-point subnet, with exactly one other router). A next hop that cannot be matched is simply not judged.
+
+**Only what loses packets or cuts the topology is a warning.**
+
+| Level | Findings |
+|---|---|
+| **critical** | a prefix the LSDB advertises is missing from the routing table; every next hop of a route is through a neighbour that is not Full; a neighbour stuck in Init / ExStart / Exchange / Down; a Full neighbour lost since the last run |
+| **warning** | only some next hops of a route are through a broken neighbour; the LSDB advertises an adjacency the neighbour table lacks; a neighbour stuck in Loading / 2-Way where Full is needed; an empty routing table |
+| **info** | a path longer than the shortest (cost differs from SPF, next hop off the shortest path), a missing ECMP path, a route another protocol overrides, a stale route nothing advertises, a Full neighbour the LSDB does not show yet, a new neighbour, a recovery |
+
+Information is valid-but-not-ideal. The console lists the first eight informational rows and counts the rest; the explorer hides them until you click the *info* chip; the exit code and the banner badge only ever count critical and warning.
+
 ### End-to-end visibility: neighbours and routing table
 
 Next to the LSDB each polled router is asked for its OSPF neighbour table and its OSPF routing table. Both are best effort: a command that fails or is not available on a platform costs nothing but a log warning, and `polling.neighbors: false` / `polling.routes: false` switch them off.
@@ -181,13 +206,13 @@ Each neighbour has an ID, local interface, peer address, state, priority, dead t
 |---|---|
 | LSDB vs neighbour table | the LSDB still advertises an adjacency but the router's own table shows the neighbour stuck (`Init`, `ExStart`, ...) or absent, or shows a Full neighbour the LSDB has no link for. On a shared segment only adjacencies with the DR must be Full — `2-Way` between two DROthers is normal |
 | Neighbour flaps | a neighbour's state changed, was lost or is new compared with the last accepted run (only routers polled in both runs are compared) |
-| SPF vs RIB | Dijkstra over the LSDB (equal-cost paths kept) predicts every intra-area prefix's cost and first hops; the routing table is held against it: **blackhole** (prefix missing, or routed via a non-Full neighbour), **suboptimal** (wrong cost, next hop off the shortest path, ECMP path missing), **overridden** (OSPF route listed but not active — FRR and Junos show these), **stale** (intra-area route no LSA advertises) |
+| SPF vs RIB | Dijkstra over the LSDB (equal-cost paths kept) predicts every intra-area prefix's cost and first hops; the routing table is held against it: **blackhole** (prefix missing, or routed via a non-Full neighbour — critical/warning), and, as information only, **suboptimal** (wrong cost, next hop off the shortest path, ECMP path missing), **overridden** (OSPF route listed but not active — FRR and Junos show these) and **stale** (intra-area route no LSA advertises). See *What is not an alarm* |
 
 What it cannot do, and why: only Type 1/2 LSAs are read, so inter-area and external routes cannot be recomputed and are counted as *unverified*, not judged; prefixes in areas the router is not in are not expected in its RIB (summarisation and filtering at the ABR are legitimate). The RIB command only lists OSPF routes, so on Cisco/Arista a prefix that is simply missing may have been beaten by a lower-distance static/BGP route, filtered by a `distribute-list`, or not installed — the report names these as possible causes (`show ip route <prefix>` tells which). A neighbour flap that happens and recovers *between* two runs is not seen.
 
 **Prefix path lookup.** `--trace 10.1.1.5` (an address, longest-prefix match, or a prefix) shows how a router reaches it: its routing-table entry, who advertises the prefix in the LSDB, and the LSDB shortest path hop by hop with interface and cost. The path is drawn in blue on the diagram, and the verdict says whether the RIB and the LSDB agree. `--trace-from ROUTER_ID` picks another router (LSDB side only unless it was polled).
 
-**Alerting.** Findings do not change the exit code by default. `--fail-on-findings` makes a run with a critical finding exit with `4` (a suspect run still exits `3`). Counts are added to the bottom banner and to `data/changelog.jsonl`.
+**Alerting.** Findings do not change the exit code by default. `--fail-on-findings` makes a run with a *critical* finding exit with `4` (a suspect run still exits `3`). Counts are added to the bottom banner and to `data/changelog.jsonl`.
 
 ### Supported device types
 
@@ -247,8 +272,9 @@ python main.py --trace 10.136.4.9                          # the traced path is 
 | Filter | One-way links on/off, cost and interface labels, area boxes, and per-area visibility |
 | Bundle | *Bundle leaf routers of a segment, from N*: routers whose only link is to one segment collapse into a single `×N routers` node on a thick link; click it, or search for one of them, to expand |
 | View | Wheel zoom, drag the background to pan, `+` `-` `f` (fit), full screen, *Download SVG* of the current picture |
+| Theme | The ☀️/🌙/◐ button in the header cycles **auto** (follows the operating system, live), **light** and **dark**; the choice is kept in the browser (`ospf-explorer:theme`) and the whole picture, badges and sidebar are recoloured without losing your selection or zoom. `--theme` sets where a page without a saved choice starts |
 
-The explorer needs a current browser; the layout itself is computed by Python, so the picture is reproducible. The PNG/SVG/PDF output and `--layout` (the Graphviz engine) are unchanged.
+The explorer needs a current browser; the layout itself is computed by Python, so the picture is reproducible. The PNG/SVG/PDF output and `--layout` (the Graphviz engine) keep their layout; `--theme dark` redraws them in dark colours (`python main.py --output topo.png --theme dark`).
 
 ### Credentials via environment variables
 
@@ -284,6 +310,8 @@ Options:
   --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
   --output PATH         Diagram output path; extension sets format (png, svg, pdf, ... or html for the interactive
                         explorer) (default: output/topology.png)
+  --theme {light,dark}  Colour theme of the Graphviz picture (default: light, or visualization.theme): dark draws on a
+                        dark background with light lines and text. Also the explorer's starting theme
   --layout ENGINE       Graphviz layout engine: dot, neato, fdp, sfdp, circo, ... (default: dot)
   --accept-changes      Commit this run as the new baseline even if the guard flagged it
   --dry-run             Build and diff the topology without saving any state files

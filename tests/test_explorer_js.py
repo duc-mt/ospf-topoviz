@@ -74,9 +74,20 @@ def observed(tmp_path_factory):
         spf_cost=201,
         paths=[[P + "6", "net-10.130.240.1", P + "19", "net-10.136.4.4"]],
     )
+    quiet_graph = realistic()
+    quiet_graph.graph["flushing_lsas"] = [
+        {
+            "type": "network",
+            "id": "net-10.130.240.9",
+            "area": "0.0.0.0",
+            "age": 3550,
+            "dr": P + "4",
+            "prefixes": ["10.130.240.0/24"],
+        }
+    ]
     rich = write_explorer(
         folder / "rich.html",
-        realistic(),
+        quiet_graph,
         TopologyDiff(
             findings=[f.to_dict() for f in findings],
             suspect_reasons=["1 seed did not answer"],
@@ -216,7 +227,20 @@ def test_findings_are_grouped_filterable_and_clicking_one_finds_its_routers(obse
         rich["chips"] == ["2 critical", "1 warning", "1 info"] and rich["suspectCard"]
     )
     assert rich["focusAfterRow"] == [P + "1", P + "4"]
-    assert rich["groupsWithoutCritical"] == 2
+    assert (
+        rich["groupsDefault"] == 3
+        and rich["infoChipOff"]
+        and rich["groupsWithInfo"] == 4
+    )  # info on request
+    assert rich["groupsWithoutCritical"] == 1
+
+
+def test_ignored_lsas_are_shown_as_an_information_card(observed):
+    [card] = observed["rich"]["flushCard"]
+    assert (
+        "1 LSA about to age out (ignored)" in card
+        and "network 10.130.240.9 (age 3550 s)" in card
+    )
 
 
 def test_the_trace_is_listed_drawn_and_focusable(observed):
@@ -230,3 +254,95 @@ def test_the_trace_is_listed_drawn_and_focusable(observed):
         rich["traceFocusNodes"],
         rich["traceLinksDrawn"],
     ) == (3, 4, 3)
+
+
+# ---------------------------------------------------------------- theme switch
+def test_the_page_starts_in_auto_and_resolves_it_to_dark_when_the_system_says_nothing(
+    observed,
+):
+    first = observed["theme"]["initial"]
+    assert (first["pref"], first["attr"], first["saved"]) == ("auto", "dark", None)
+    assert first["icon"] == "\u25d0" and "auto" in first["title"]
+
+
+def test_the_button_cycles_auto_light_dark_auto_and_saves_each_choice(observed):
+    light, dark, auto = observed["theme"]["cycle"]
+    assert (light["pref"], light["attr"], light["saved"], light["icon"]) == (
+        "light",
+        "light",
+        "light",
+        "\u2600\ufe0f",
+    )
+    assert (dark["pref"], dark["attr"], dark["saved"], dark["icon"]) == (
+        "dark",
+        "dark",
+        "dark",
+        "\U0001f319",
+    )
+    assert (auto["pref"], auto["saved"]) == (
+        "auto",
+        "auto",
+    ) and "follows the system" in auto["title"]
+    assert observed["theme"]["drawnWithoutError"] == 19
+
+
+def test_the_picture_is_recoloured_when_the_theme_changes(observed):
+    first, (light, dark, _auto) = (
+        observed["theme"]["initial"],
+        observed["theme"]["cycle"],
+    )
+    assert (
+        first["areaFill"] == dark["areaFill"] == "#10203a"
+        and light["areaFill"] == "#dbeafe"
+    )
+    assert (
+        first["pill"] == "#0b1324" and light["pill"] == "#ffffff"
+    )  # cost badges: dark chip / white chip
+    assert (
+        light["areaLabel"] != dark["areaLabel"]
+        and light["linkColor"] != dark["linkColor"]
+    )
+
+
+def test_auto_follows_the_operating_system_live_and_an_explicit_choice_does_not(
+    observed,
+):
+    t = observed["theme"]
+    assert (
+        t["autoWhenSystemIsLight"]["attr"] == "light"
+        and t["autoWhenSystemIsLight"]["pref"] == "auto"
+    )
+    assert (
+        t["afterSystemGoesDark"]["attr"] == "dark"
+        and t["afterSystemGoesLight"]["attr"] == "light"
+    )
+    assert (
+        t["explicitIgnoresSystem"]["attr"] == "light"
+        and t["explicitIgnoresSystem"]["pref"] == "light"
+    )
+
+
+def test_a_saved_choice_wins_over_the_system_and_junk_in_storage_is_ignored(observed):
+    t = observed["theme"]
+    assert t["savedDark"]["attr"] == "dark" and t["savedLight"]["attr"] == "light"
+    assert (t["junkIgnored"]["pref"], t["junkIgnored"]["attr"]) == ("auto", "dark")
+
+
+def test_changing_theme_keeps_the_selection_and_the_view(observed):
+    assert observed["theme"]["selectionKept"]
+
+
+def test_the_svg_download_takes_the_current_themes_background(observed):
+    assert observed["theme"]["exportBg"] == "#f8fafc"
+
+
+def test_the_head_script_picks_the_theme_before_the_page_script_runs(observed):
+    head = observed["theme"]["head"]
+    assert head["scriptWasRemoved"]
+    assert (
+        head["nothing"] == "dark" and head["autoLight"] == "light"
+    )  # "auto": the system decides
+    assert head["savedLight"] == "light" and head["savedDarkBeatsSystem"] == "dark"
+    assert (
+        head["pageDefaultLight"] == "light" and head["pageDefaultDark"] == "dark"
+    )  # an explicit page default is not "auto"

@@ -480,7 +480,10 @@ def test_a_higher_rib_cost_than_spf_is_flagged():
     rib = healthy_rib()
     rib[5].metric = 35
     [f] = run(rib).findings
-    assert (f.kind, f.severity) == (COST_MISMATCH, "warning")
+    assert (f.kind, f.severity) == (
+        COST_MISMATCH,
+        "info",
+    )  # a longer path than SPF finds still forwards packets
     assert f.data == {"rib_cost": 35, "spf_cost": 25}
 
 

@@ -12,6 +12,12 @@ What is compared with what:
 * SPF vs RIB: Dijkstra over the LSDB graph from the polled router gives the cost and the first hops
   every intra-area prefix *should* have; the router's actual ``show ip route ospf`` is held against it.
 
+How serious a finding is: **critical** and **warning** are reserved for what drops packets or cuts
+the topology - a prefix missing from the routing table, a route through a neighbour that is not Full, an
+adjacency stuck or gone, a lost neighbour. Everything that is valid but not ideal - a longer path than the
+shortest, a missing ECMP path, a route another protocol overrides, a stale route, an LSDB that lags
+behind a Full neighbour - is **info**: worth knowing, never an alarm.
+
 Limits (by design of the data collected): only Type 1/2 LSAs are read, so inter-area (Type 3) and
 external (Type 5/7) routes cannot be recomputed and are reported as "unverified". The RIB command only
 lists OSPF routes, so a prefix absent from it can have been beaten by a lower-distance source, filtered, or
@@ -79,7 +85,11 @@ NEIGHBOR_KINDS = (
     NBR_NEW,
 )
 FLAP_KINDS = (NBR_STATE_CHANGE, NBR_LOST, NBR_NEW)
-BLACKHOLE_KINDS = (ROUTE_MISSING, NEXTHOP_DOWN, ROUTE_STALE, RIB_EMPTY)
+BLACKHOLE_KINDS = (
+    ROUTE_MISSING,
+    NEXTHOP_DOWN,
+    RIB_EMPTY,
+)  # what really loses packets (a stale route is only information)
 SUBOPTIMAL_KINDS = (ROUTE_OVERRIDDEN, COST_MISMATCH, NEXTHOP_MISMATCH, ECMP_MISSING)
 
 _STATE_HINTS = {
@@ -247,6 +257,96 @@ def ip_owners(graph: nx.DiGraph, details: Iterable[SourceDetail]) -> dict[str, s
     return owners
 
 
+class IpResolver:
+    """Finds the router a next-hop *interface address* belongs to.
+
+    A routing table names its next hops by the neighbour's interface IP on the shared link, while the
+    topology is made of router IDs, and the two are different numbers. The address is looked up, in order of
+    trust, in:
+
+    1. the polled router's **own neighbour table** (the neighbour's ID and interface address as its Hellos
+       reported them - first-hand);
+    2. the LSDB: the **link data** every Router LSA gives for its own interface on each link;
+    3. any other polled router's neighbour table;
+    4. the router IDs themselves (a router whose ID is also an interface address);
+    5. the segment the address sits on: a transit network, or a point-to-point subnet, that has exactly one
+       router other than the polled one.
+
+    ``resolve`` returns ``None`` when it cannot tell - callers must then not judge that next hop.
+    """
+
+    def __init__(self, graph: nx.DiGraph, details: Iterable[SourceDetail]) -> None:
+        self.graph = graph
+        self.lsdb: dict[str, str] = {}
+        for u, _v, attrs in graph.edges(data=True):
+            ip = attrs.get("interface_address")
+            if ip and _is_ip(ip) and graph.nodes[u].get("type") == "router":
+                self.lsdb.setdefault(str(ip), u)
+        self.table: dict[
+            str, dict[str, str]
+        ] = {}  # polled router -> {neighbour address: neighbour ID}
+        self.heard: dict[str, str] = {}
+        for detail in details:
+            for nbr in detail.neighbors:
+                if nbr.address:
+                    if detail.router_id:
+                        self.table.setdefault(detail.router_id, {})[nbr.address] = (
+                            nbr.router_id
+                        )
+                    self.heard.setdefault(nbr.address, nbr.router_id)
+
+    def resolve(self, ip: str, via: str | None = None) -> str | None:
+        """The router owning ``ip``; ``via`` is the polled router whose next hop it is."""
+        if via and ip in self.table.get(via, {}):
+            return self.table[via][ip]
+        if ip in self.lsdb:
+            return self.lsdb[ip]
+        if ip in self.heard:
+            return self.heard[ip]
+        if ip in self.graph and self.graph.nodes[ip].get("type") == "router":
+            return ip
+        return self._by_segment(ip, via)
+
+    def _by_segment(self, ip: str, via: str | None) -> str | None:
+        graph = self.graph
+        if not via or via not in graph or not _is_ip(ip):
+            return None
+        address = ipaddress.IPv4Address(ip)
+        candidates: set[str] = set()
+        for seg in graph.successors(via):
+            if graph.nodes[seg].get("type") == "network" and graph.nodes[seg].get(
+                "prefix"
+            ):
+                if address in ipaddress.ip_network(
+                    graph.nodes[seg]["prefix"], strict=False
+                ):
+                    candidates |= {
+                        r
+                        for r in graph.successors(seg)
+                        if r != via and graph.nodes[r].get("type") == "router"
+                    }
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        # point to point: a subnet the polled router and exactly one adjacent router both advertise
+        own = {e["prefix"] for e in graph.nodes[via].get("prefixes") or ()}
+        for prefix in own:
+            if address not in ipaddress.ip_network(prefix, strict=False):
+                continue
+            sharing = {
+                other
+                for other, attrs in graph.adj[via].items()
+                if graph.nodes[other].get("type") == "router"
+                and attrs.get("link_type") == "point-to-point"
+                and any(
+                    e["prefix"] == prefix
+                    for e in graph.nodes[other].get("prefixes") or ()
+                )
+            }
+            if len(sharing) == 1:
+                return next(iter(sharing))
+        return None
+
+
 def _origin_cost(result: SpfResult, origin: dict[str, Any]) -> int | None:
     node = origin["node"]
     if node not in result.dist:
@@ -355,7 +455,7 @@ def neighbor_findings(graph: nx.DiGraph, detail: SourceDetail) -> list[Finding]:
                 Finding(
                     "neighbor",
                     NBR_NOT_IN_LSDB,
-                    WARNING,
+                    INFO,
                     router,
                     neighbor,
                     f"{neighbor} is Full with {router}"
@@ -450,7 +550,7 @@ def route_findings(
     graph: nx.DiGraph,
     detail: SourceDetail,
     index: dict[str, list[dict[str, Any]]],
-    owners: dict[str, str],
+    resolver: IpResolver,
 ) -> tuple[list[Finding], dict[str, Any]]:
     """Check one router's OSPF routing table against what SPF over its LSDB predicts.
 
@@ -547,7 +647,7 @@ def route_findings(
                 Finding(
                     "route",
                     ROUTE_OVERRIDDEN,
-                    WARNING,
+                    INFO,
                     router,
                     prefix,
                     f"{prefix}: the OSPF route is listed but not the active one on {router}",
@@ -567,7 +667,7 @@ def route_findings(
                 Finding(
                     "route",
                     COST_MISMATCH,
-                    WARNING,
+                    INFO,
                     router,
                     prefix,
                     f"{prefix}: routing table cost {route.metric}, SPF over the LSDB gives {cost}",
@@ -578,7 +678,7 @@ def route_findings(
                     {"rib_cost": route.metric, "spf_cost": cost},
                 )
             )
-        via = {owners.get(h.ip) for h in route.next_hops if h.ip}
+        via = {resolver.resolve(h.ip, router) for h in route.next_hops if h.ip}
         if via and None not in via:  # every next hop identified
             stray = via - hops
             if stray and hops:
@@ -587,7 +687,7 @@ def route_findings(
                     Finding(
                         "route",
                         NEXTHOP_MISMATCH,
-                        WARNING,
+                        INFO,
                         router,
                         prefix,
                         f"{prefix}: next hop via {', '.join(sorted(stray, key=node_sort_key))} is not on a shortest path "
@@ -602,7 +702,7 @@ def route_findings(
                     Finding(
                         "route",
                         ECMP_MISSING,
-                        WARNING,
+                        INFO,
                         router,
                         prefix,
                         f"{prefix}: SPF has {len(hops)} equal-cost paths, the RIB installs {len(via)} "
@@ -648,15 +748,24 @@ def route_findings(
         if not problem:
             check["ok"] += 1
 
+    flushing = {
+        p
+        for entry in graph.graph.get("flushing_lsas") or ()
+        for p in entry.get("prefixes") or ()
+    }
     for route in rib.values():
         if route.cidr in expected:
             continue
-        if route.cidr not in index and route.route_type == ROUTE_INTRA:
+        if (
+            route.cidr not in index
+            and route.route_type == ROUTE_INTRA
+            and route.cidr not in flushing
+        ):
             findings.append(
                 Finding(
                     "route",
                     ROUTE_STALE,
-                    WARNING,
+                    INFO,
                     router,
                     route.cidr,
                     f"{route.cidr}: {router} has an intra-area route that no LSA in the LSDB advertises",
@@ -688,10 +797,10 @@ def correlate(
     if not details:
         return report
     index = prefix_origins(graph)
-    owners = ip_owners(graph, details)
+    resolver = IpResolver(graph, details)
     for detail in details:
         report.findings += neighbor_findings(graph, detail)
-        found, check = route_findings(graph, detail, index, owners)
+        found, check = route_findings(graph, detail, index, resolver)
         report.findings += found
         if detail.routes is not None and detail.router_id:
             report.rib_checks.append(check)
@@ -799,7 +908,7 @@ def trace_prefix(
     else:
         result.prefix = lsdb_best
     if rib_best is not None:
-        owners = ip_owners(graph, details)
+        resolver = IpResolver(graph, details)
         result.rib = {
             "prefix": rib_best.cidr,
             "route_type": rib_best.route_type,
@@ -809,7 +918,7 @@ def trace_prefix(
                 {
                     "ip": h.ip,
                     "interface": h.interface,
-                    "router": owners.get(h.ip) if h.ip else None,
+                    "router": resolver.resolve(h.ip, source) if h.ip else None,
                 }
                 for h in rib_best.next_hops
             ],

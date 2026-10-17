@@ -48,6 +48,89 @@ FILL_NETWORK = "#FFF3C4"
 FILL_UNRESOLVED = "#ECF0F1"
 FILL_REMOVED = "#FDEDEC"
 
+
+@dataclass(frozen=True)
+class Palette:
+    """Every colour of the Graphviz picture. ``LIGHT`` is the classic look; ``DARK`` is for dark backgrounds."""
+
+    name: str
+    background: str | None  # ``None``: leave the canvas to the viewer (white)
+    text: str  # title, notes and legend
+    edge: str  # an ordinary link
+    edge_text: str  # cost and interface labels
+    node_border: str
+    muted: str
+    added: str
+    removed: str
+    changed: str
+    full: str
+    two_way: str
+    stuck: str
+    down: str
+    path: str
+    warn: str
+    fill_router: str
+    router_text: str
+    fill_network: str
+    network_text: str
+    fill_unresolved: str
+    unresolved_text: str
+    fill_removed: str
+
+
+LIGHT = Palette(
+    name="light",
+    background=None,
+    text="black",
+    edge=COLOR_NORMAL,
+    edge_text=COLOR_NORMAL,
+    node_border=COLOR_NORMAL,
+    muted=COLOR_MUTED,
+    added=COLOR_ADDED,
+    removed=COLOR_REMOVED,
+    changed=COLOR_CHANGED,
+    full=COLOR_FULL,
+    two_way=COLOR_TWO_WAY,
+    stuck=COLOR_STUCK,
+    down=COLOR_DOWN,
+    path=COLOR_PATH,
+    warn=COLOR_WARN,
+    fill_router=FILL_ROUTER,
+    router_text="white",
+    fill_network=FILL_NETWORK,
+    network_text="black",
+    fill_unresolved=FILL_UNRESOLVED,
+    unresolved_text=COLOR_NORMAL,
+    fill_removed=FILL_REMOVED,
+)
+DARK = Palette(
+    name="dark",
+    background="#0B1324",
+    text="#E6EDF7",
+    edge="#94A3B8",
+    edge_text="#E6EDF7",
+    node_border="#94A3B8",
+    muted="#94A3B8",
+    added="#34D399",
+    removed="#F87171",
+    changed="#FB923C",
+    full="#34D399",
+    two_way="#FACC15",
+    stuck="#FB923C",
+    down="#F87171",
+    path="#38BDF8",
+    warn="#A78BFA",
+    fill_router="#1D4ED8",
+    router_text="#E6EDF7",
+    fill_network="#5C4A12",
+    network_text="#E6EDF7",
+    fill_unresolved="#1E293B",
+    unresolved_text="#E6EDF7",
+    fill_removed="#4B1D22",
+)
+PALETTES = {"light": LIGHT, "dark": DARK}
+THEMES = tuple(PALETTES)
+
 #: Auto layout: a node with at least this many neighbours switches the drawing to left-to-right.
 AUTO_LR_DEGREE = 6
 #: Line thickness range used when drawing cost-weighted lines.
@@ -55,24 +138,36 @@ PEN_MIN, PEN_MAX, PEN_FLAT = 1.0, 2.6, 1.6
 
 #: Display abbreviations for long interface names, longest prefix first (the stored name is never shortened).
 _IF_ABBREVIATIONS = (
-    ("HundredGigE", "Hu"), ("TwentyFiveGigE", "Twe"), ("TenGigabitEthernet", "Te"), ("GigabitEthernet", "Gi"),
-    ("FastEthernet", "Fa"), ("Port-channel", "Po"), ("Loopback", "Lo"), ("Ethernet", "Eth"), ("Vlan", "Vl"),
+    ("HundredGigE", "Hu"),
+    ("TwentyFiveGigE", "Twe"),
+    ("TenGigabitEthernet", "Te"),
+    ("GigabitEthernet", "Gi"),
+    ("FastEthernet", "Fa"),
+    ("Port-channel", "Po"),
+    ("Loopback", "Lo"),
+    ("Ethernet", "Eth"),
+    ("Vlan", "Vl"),
 )
 
 
-def adjacency_color(state: str | None) -> str | None:
+def adjacency_color(state: str | None, palette: Palette = LIGHT) -> str | None:
     """Link colour for a neighbour state (``None`` = no adjacency data for the link)."""
     if state is None:
         return None
-    return {"Full": COLOR_FULL, "2-Way": COLOR_TWO_WAY, "Loading": COLOR_STUCK, "Exchange": COLOR_STUCK,
-            "ExStart": COLOR_STUCK}.get(state, COLOR_DOWN)
+    return {
+        "Full": palette.full,
+        "2-Way": palette.two_way,
+        "Loading": palette.stuck,
+        "Exchange": palette.stuck,
+        "ExStart": palette.stuck,
+    }.get(state, palette.down)
 
 
 def short_interface(name: str) -> str:
     """``GigabitEthernet0/0/1`` -> ``Gi0/0/1`` so link labels stay narrow."""
     for long, short in _IF_ABBREVIATIONS:
         if name.startswith(long):
-            return short + name[len(long):]
+            return short + name[len(long) :]
     return name
 
 
@@ -104,6 +199,9 @@ class VisualOptions:
     names: dict[str, str] = field(
         default_factory=dict
     )  # router-ID -> hostname, shown above the ID
+    theme: str = "light"  # light | dark: colours of the Graphviz picture (the explorer page has its own switch)
+    #: True when the user chose the theme (settings or --theme): the explorer then starts in it instead of "auto".
+    theme_explicit: bool = False
 
     @classmethod
     def from_settings(cls, section: dict[str, Any] | None) -> VisualOptions:
@@ -129,7 +227,13 @@ class VisualOptions:
             cost_weighted_lines=bool(section.get("cost_weighted_lines", True)),
             area_clusters=bool(section.get("area_clusters", True)),
             names={str(k): str(v) for k, v in names.items()},
+            theme=str(section.get("theme", "light")).strip().lower(),
+            theme_explicit="theme" in section,
         )
+        if options.theme not in PALETTES:
+            raise VisualizationError(
+                f"visualization.theme must be one of {', '.join(THEMES)}"
+            )
         if options.rankdir not in _RANKDIRS:
             raise VisualizationError(
                 f"visualization.rankdir must be one of {', '.join(_RANKDIRS)}"
@@ -189,7 +293,11 @@ class TopologyVisualizer:
         self.image_format = self.output_path.suffix.lstrip(".").lower() or "png"
         #: Names this network in the explorer page's saved-layout store (set by the caller, e.g. the seeds).
         self.scope = "default"
-        if self.image_format not in ("html", "htm") and self.image_format not in graphviz.FORMATS:
+        self.palette = PALETTES.get(self.options.theme, LIGHT)
+        if (
+            self.image_format not in ("html", "htm")
+            and self.image_format not in graphviz.FORMATS
+        ):
             raise VisualizationError(
                 f"Unsupported output format '.{self.image_format}'"
             )
@@ -203,7 +311,10 @@ class TopologyVisualizer:
 
     # ---------------------------------------------------------------- building
     def build_digraph(
-        self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None
+        self,
+        graph: nx.DiGraph,
+        diff: TopologyDiff,
+        highlight: set[frozenset] | None = None,
     ) -> graphviz.Graph:
         """Translate the graph and diff report into a Graphviz graph.
 
@@ -217,12 +328,13 @@ class TopologyVisualizer:
         dot = graphviz.Graph(
             name="OSPF_Topology", engine=self.layout, format=self.image_format
         )
+        pal = self.palette
         dot.attr(
             label=self._title(graph, diff, links),
             labelloc="t",
             fontname="Helvetica",
             fontsize="13",
-            fontcolor=COLOR_REMOVED if diff.suspect_reasons else "black",
+            fontcolor=pal.removed if diff.suspect_reasons else pal.text,
             rankdir=self._rankdir(links),
             splines="true",
             overlap="false",
@@ -230,6 +342,8 @@ class TopologyVisualizer:
             ranksep="1.1",
             dpi="150",
         )
+        if pal.background:
+            dot.attr(bgcolor=pal.background)
         dot.attr("node", fontname="Helvetica", fontsize="11")
         dot.attr("edge", fontname="Helvetica", fontsize="10", labeldistance="2.4")
 
@@ -246,27 +360,32 @@ class TopologyVisualizer:
                         end,
                         label=end,
                         style="filled,dashed",
-                        fillcolor=FILL_UNRESOLVED,
-                        color=COLOR_MUTED,
+                        fillcolor=pal.fill_unresolved,
+                        fontcolor=pal.unresolved_text,
+                        color=pal.muted,
                     )
                     drawn.add(end)
             attrs = self._edge_attrs(link, scale)
             if highlight and frozenset((link.a, link.b)) in highlight:
-                attrs.update(color=COLOR_PATH, fontcolor=COLOR_PATH, penwidth="5", style="solid")
+                attrs.update(
+                    color=pal.path, fontcolor=pal.path, penwidth="5", style="solid"
+                )
             dot.edge(link.a, link.b, **attrs)
 
         for issue in graph.graph.get("adjacency_issues") or []:
             router, neighbour = issue["router"], issue["neighbor"]
             if router not in drawn or self._state_drawn(graph, router, neighbour):
                 continue  # the link itself is coloured by its adjacency state; no extra dashed line needed
-            if neighbour not in drawn:  # a router that is trying to join but is not in the LSDB (yet)
+            if (
+                neighbour not in drawn
+            ):  # a router that is trying to join but is not in the LSDB (yet)
                 dot.node(
                     neighbour,
                     label=f"{neighbour}\\n(not in LSDB)",
                     style="filled,dashed",
-                    fillcolor=FILL_UNRESOLVED,
-                    color=COLOR_WARN,
-                    fontcolor=COLOR_NORMAL,
+                    fillcolor=pal.fill_unresolved,
+                    color=pal.warn,
+                    fontcolor=pal.unresolved_text,
                 )
                 drawn.add(neighbour)
             text = issue["state"] + (
@@ -278,8 +397,8 @@ class TopologyVisualizer:
                 router,
                 neighbour,
                 label=text,
-                color=COLOR_WARN,
-                fontcolor=COLOR_WARN,
+                color=pal.warn,
+                fontcolor=pal.warn,
                 style="dashed",
                 penwidth="1.6",
             )
@@ -290,17 +409,25 @@ class TopologyVisualizer:
         """True if the link between ``router`` and ``neighbour`` carries an adjacency state (so it is coloured)."""
         if graph.has_edge(router, neighbour):
             return "nbr_state" in graph.edges[router, neighbour]
-        return any("nbr_state" in attrs and graph.has_edge(seg, neighbour)
-                   for seg, attrs in ((s, graph.edges[router, s]) for s in graph.successors(router)
-                                      if graph.nodes[s].get("type") == "network"))
+        return any(
+            "nbr_state" in attrs and graph.has_edge(seg, neighbour)
+            for seg, attrs in (
+                (s, graph.edges[router, s])
+                for s in graph.successors(router)
+                if graph.nodes[s].get("type") == "network"
+            )
+        )
 
     @staticmethod
     def _link_adjacency(link: _Link) -> str | None:
         """Worst adjacency state over both directions of a link."""
         from src.vendors.base import state_severity
 
-        states = [s.attrs["nbr_state"] for s in (link.ab, link.ba)
-                  if s and s.status != "removed" and s.attrs.get("nbr_state")]
+        states = [
+            s.attrs["nbr_state"]
+            for s in (link.ab, link.ba)
+            if s and s.status != "removed" and s.attrs.get("nbr_state")
+        ]
         return max(states, key=state_severity) if states else None
 
     # ------------------------------------------------------------------- links
@@ -343,7 +470,8 @@ class TopologyVisualizer:
             if not graph.has_edge(record["source"], record["target"]):
                 put(record["source"], record["target"], _Side(record, "removed"))
         return sorted(
-            links.values(), key=lambda l: (node_sort_key(l.a), node_sort_key(l.b))
+            links.values(),
+            key=lambda link: (node_sort_key(link.a), node_sort_key(link.b)),
         )
 
     @staticmethod
@@ -376,8 +504,9 @@ class TopologyVisualizer:
 
     def _edge_attrs(self, link: _Link, scale) -> dict[str, str]:
         """Graphviz attributes for one link (labels at the right ends, colour by status)."""
+        pal = self.palette
         status = self._link_status(link)
-        attrs: dict[str, str] = {"color": COLOR_NORMAL, "fontcolor": COLOR_NORMAL}
+        attrs: dict[str, str] = {"color": pal.edge, "fontcolor": pal.edge_text}
 
         text_a, text_b = self._end_text(link.ab), self._end_text(link.ba)
         on_segment = any(
@@ -407,7 +536,7 @@ class TopologyVisualizer:
                     break
             else:
                 attrs["label"] = "one-way"
-            attrs.update(color=COLOR_WARN, fontcolor=COLOR_WARN, style="dotted")
+            attrs.update(color=pal.warn, fontcolor=pal.warn, style="dotted")
 
         costs = [
             s.attrs["metric"]
@@ -416,23 +545,25 @@ class TopologyVisualizer:
         ]
         attrs["penwidth"] = f"{scale(min(costs)) if costs else PEN_FLAT:.1f}"
         if status == "added":
-            attrs.update(color=COLOR_ADDED, fontcolor=COLOR_ADDED, penwidth="2.8")
+            attrs.update(color=pal.added, fontcolor=pal.added, penwidth="2.8")
         elif status == "removed":
             attrs.update(
-                color=COLOR_REMOVED,
-                fontcolor=COLOR_REMOVED,
+                color=pal.removed,
+                fontcolor=pal.removed,
                 style="dashed",
                 penwidth="2.4",
             )
         elif status == "changed":
-            attrs.update(color=COLOR_CHANGED, fontcolor=COLOR_CHANGED, penwidth="2.8")
+            attrs.update(color=pal.changed, fontcolor=pal.changed, penwidth="2.8")
 
         state = self._link_adjacency(link)
         one_way = attrs.get("style") == "dotted"
         if state and status != "removed" and not one_way:
-            color = adjacency_color(state)
+            color = adjacency_color(state, pal)
             if state == "Full":
-                if status is None:  # an added/changed link keeps its change colour; Full says nothing is wrong
+                if (
+                    status is None
+                ):  # an added/changed link keeps its change colour; Full says nothing is wrong
                     attrs.update(color=color, fontcolor=color)
             else:  # anything short of Full is worth seeing, whatever else changed
                 attrs.update(color=color, fontcolor=color, penwidth="3.2")
@@ -500,8 +631,8 @@ class TopologyVisualizer:
                     label=f"Area {area}",
                     labeljust="l",
                     style="dashed",
-                    color=COLOR_MUTED,
-                    fontcolor=COLOR_MUTED,
+                    color=self.palette.muted,
+                    fontcolor=self.palette.muted,
                     fontname="Helvetica",
                     fontsize="12",
                 )
@@ -513,46 +644,59 @@ class TopologyVisualizer:
         self, target: graphviz.Graph, node_id: str, attrs: dict, status: str | None
     ) -> None:
         """Draw one node: shape by role, fill by resolved/unresolved, outline by diff status."""
+        pal = self.palette
         if attrs.get("type") == "network":
             label = display_name(node_id, attrs)
             if attrs.get("dr"):
                 label += f"\\nDR {attrs['dr']}"
-            look = {"shape": "diamond", "fillcolor": FILL_NETWORK, "fontcolor": "black"}
+            look = {
+                "shape": "diamond",
+                "fillcolor": pal.fill_network,
+                "fontcolor": pal.network_text,
+            }
         else:
             name = self.options.names.get(node_id)
             label = f"{name}\\n{node_id}" if name else node_id
             look = {
                 "shape": self.options.router_shape,
-                "fillcolor": FILL_ROUTER,
-                "fontcolor": "white",
+                "fillcolor": pal.fill_router,
+                "fontcolor": pal.router_text,
             }
-            roles = [r for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr"))) if on]
+            roles = [
+                r
+                for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr")))
+                if on
+            ]
             if roles:
                 label += "\\n" + "/".join(roles)
             if attrs.get("abr"):
-                look["peripheries"] = "2"  # a second outline marks the routers that join areas
-        look.update(style="filled", color=COLOR_NORMAL, penwidth="1.2")
+                look["peripheries"] = (
+                    "2"  # a second outline marks the routers that join areas
+                )
+        look.update(style="filled", color=pal.node_border, penwidth="1.2")
 
         if not attrs.get(
             "resolved", True
         ):  # referenced by a link, but no LSA of its own in the database
             look.update(
-                fillcolor=FILL_UNRESOLVED,
-                fontcolor=COLOR_NORMAL,
-                color=COLOR_MUTED,
+                fillcolor=pal.fill_unresolved,
+                fontcolor=pal.unresolved_text,
+                color=pal.muted,
                 style="filled,dashed",
             )
             label += "\\n(no LSA)"
-        if attrs.get("stale"):  # its LSA is no longer being refreshed: the router is probably gone
-            look.update(color=COLOR_WARN, style="filled,dashed", penwidth="2")
+        if attrs.get(
+            "stale"
+        ):  # its LSA is no longer being refreshed: the router is probably gone
+            look.update(color=pal.warn, style="filled,dashed", penwidth="2")
             label += f"\\nstale LSA ({attrs.get('lsa_age', 0) // 60} min)"
         if status == "added":
-            look.update(color=COLOR_ADDED, penwidth="3")
+            look.update(color=pal.added, penwidth="3")
         elif status == "removed":
             look.update(
-                color=COLOR_REMOVED,
-                fontcolor=COLOR_REMOVED,
-                fillcolor=FILL_REMOVED,
+                color=pal.removed,
+                fontcolor=pal.removed,
+                fillcolor=pal.fill_removed,
                 style="filled,dashed",
                 penwidth="2",
             )
@@ -582,34 +726,67 @@ class TopologyVisualizer:
             f"{_plural(kinds.count('network'), 'transit network')}, {_plural(live_links, 'link')}  |  {stamp}"
         ]
         meta = graph.graph
-        flagged = bool(meta.get("stale_nodes") or meta.get("one_way_links") or meta.get("adjacency_issues"))
+        flagged = bool(
+            meta.get("stale_nodes")
+            or meta.get("one_way_links")
+            or meta.get("adjacency_issues")
+        )
         purple = "   purple = stale / one-way / adjacency problem" if flagged else ""
         if diff.baseline_available:
             lines.append(
-                "green = new   red dashed = removed   orange = metric changed" + purple + "   |   cost shown at each interface"
+                "green = new   red dashed = removed   orange = metric changed"
+                + purple
+                + "   |   cost shown at each interface"
             )
         else:
             lines.append(
-                "first run - no previous state to compare against" + purple + "   |   cost shown at each interface"
+                "first run - no previous state to compare against"
+                + purple
+                + "   |   cost shown at each interface"
             )
         if any(attrs.get("nbr_state") for _u, _v, attrs in graph.edges(data=True)):
-            lines.append("adjacency: green = Full   yellow = 2-Way   orange = ExStart/Exchange/Loading   red = Init/Down")
+            lines.append(
+                "adjacency: green = Full   yellow = 2-Way   orange = ExStart/Exchange/Loading   red = Init/Down"
+            )
         if getattr(diff, "findings", None):
             counts = {}
             for f in diff.findings:
                 counts[f["severity"]] = counts.get(f["severity"], 0) + 1
-            lines.append("CROSS-CHECK: " + ", ".join(f"{n} {sev}" for sev, n in counts.items()))
+            alarms = [
+                f"{counts[sev]} {sev}"
+                for sev in ("critical", "warning")
+                if counts.get(sev)
+            ]
+            info = f"{counts['info']} info" if counts.get("info") else ""
+            lines.append(
+                "CROSS-CHECK: "
+                + (
+                    ", ".join(alarms) + (f" (+{info})" if info else "")
+                    if alarms
+                    else f"{info} (no alarm)"
+                )
+            )
+        if meta.get("flushing_lsas"):
+            lines.append(
+                f"INFO: {_plural(len(meta['flushing_lsas']), 'LSA')} at age {meta.get('maxage_ignore_age') or 0}+ s ignored (being flushed)"
+            )
         sources = graph.graph.get("sources") or []
         if len(sources) > 1:
             ok = [s["name"] for s in sources if s.get("status") == "ok"]
             lost = [s["name"] for s in sources if s.get("status") != "ok"]
             line = f"merged from {_plural(len(ok), 'router')}: {', '.join(ok)}"
-            lines.append(line + (f"   |   NOT POLLED: {', '.join(lost)}" if lost else ""))
-        found = [f"{count} {text}" for count, text in (
-            (len(meta.get("stale_nodes") or []), "stale router(s)"),
-            (meta.get("one_way_links") or 0, "one-way link(s)"),
-            (len(meta.get("adjacency_issues") or []), "adjacency problem(s)"),
-        ) if count]
+            lines.append(
+                line + (f"   |   NOT POLLED: {', '.join(lost)}" if lost else "")
+            )
+        found = [
+            f"{count} {text}"
+            for count, text in (
+                (len(meta.get("stale_nodes") or []), "stale router(s)"),
+                (meta.get("one_way_links") or 0, "one-way link(s)"),
+                (len(meta.get("adjacency_issues") or []), "adjacency problem(s)"),
+            )
+            if count
+        ]
         if found:
             lines.append("DATA QUALITY: " + ", ".join(found))
         parts = (
@@ -630,7 +807,11 @@ class TopologyVisualizer:
 
     # ---------------------------------------------------------------- rendering
     def render(
-        self, graph: nx.DiGraph, diff: TopologyDiff, highlight: set[frozenset] | None = None, trace=None
+        self,
+        graph: nx.DiGraph,
+        diff: TopologyDiff,
+        highlight: set[frozenset] | None = None,
+        trace=None,
     ) -> Path:
         """Render the diagram to ``output_path`` and return the path of the image.
 
@@ -647,7 +828,14 @@ class TopologyVisualizer:
         if self.interactive:
             from src.explorer import write_explorer  # noqa: PLC0415 - only needed for this output type
 
-            path = write_explorer(self.output_path, graph, diff, self.options, trace=trace, scope=self.scope)
+            path = write_explorer(
+                self.output_path,
+                graph,
+                diff,
+                self.options,
+                trace=trace,
+                scope=self.scope,
+            )
             logger.info("Wrote interactive topology explorer to %s", path)
             return path
         dot = self.build_digraph(graph, diff, highlight)

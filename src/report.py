@@ -161,6 +161,7 @@ def render_table(
                 row_cells.append(f" {aligned_txt} ")
             lines.append("│" + "│".join(row_cells) + "│")
 
+
     # Bottom border
     lines.append(border("╰", "┴", "╯"))
     return "\n".join(lines)
@@ -469,12 +470,20 @@ def _clip(text: str, width: int = 78) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
+#: Informational findings are listed, but only this many: they are the "valid, just not ideal" kind and
+#: can be numerous (after a reconvergence, say). The rest is counted under the table.
+MAX_INFO_ROWS = 8
+
+
 def _findings_table(
     findings: Sequence[dict], labels: dict[str, str], subject_header: str
 ) -> str:
     headers = ["SEVERITY", "ROUTER", subject_header, "KIND", "DETAIL"]
     rows, colors = [], []
-    for f in findings:
+    info_left = [f for f in findings if f["severity"] == "info"][MAX_INFO_ROWS:]
+    hidden = {id(f) for f in info_left}
+    shown = [f for f in findings if id(f) not in hidden]
+    for f in shown:
         text, color = _SEVERITY_CELL.get(f["severity"], (f["severity"].upper(), None))
         rows.append(
             [
@@ -485,10 +494,16 @@ def _findings_table(
                 f["message"],
             ]
         )
+
         colors.append([color, None, None, color, None])
     table = render_table(headers, rows, ["left"] * 5, colors)
+    if info_left:
+        table += "\n" + colorize(
+            f"  ℹ {len(info_left)} more informational finding(s) not listed (see the explorer)",
+            ANSI_DIM,
+        )
     hints = []
-    for f in findings:
+    for f in shown:
         if f["severity"] != "info" and f.get("hint") and f["hint"] not in hints:
             hints.append(f["hint"])
     if hints:

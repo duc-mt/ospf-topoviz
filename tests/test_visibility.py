@@ -474,13 +474,18 @@ def lab(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", lab.data)
     monkeypatch.setattr("src.poller.ConnectHandler", lab.network)
 
+    real_render = main.TopologyVisualizer.render
+
     def render(self, graph, diff, highlight=None, **_kw):
+        if self.interactive:
+            return real_render(self, graph, diff, highlight, **_kw)
         lab.rendered.append(
             (self.build_digraph(graph, diff, highlight).source, highlight)
         )
         return tmp_path / "topology.png"
 
     monkeypatch.setattr(main.TopologyVisualizer, "render", render)
+
     lab.config = tmp_path / "settings.yaml"
     lab.config.write_text(
         yaml.safe_dump(
