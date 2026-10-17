@@ -232,6 +232,9 @@ def test_abrs_sit_on_the_border_straight_above_the_area_they_lead_to():
         assert (
             boxes[child].x <= x <= boxes[child].x + boxes[child].w
         )  # and above its child
+        assert (
+            boxes[A0].x <= x <= boxes[A0].x + boxes[A0].w
+        )  # and within the parent's horizontal span
         assert layout.borders[abr] == A0
 
 

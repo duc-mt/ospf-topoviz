@@ -781,6 +781,14 @@ def _hang_children(
         return
     box = boxes[area]
     total = sum(boxes[c].w for c in children) + SIDE_GAP * (len(children) - 1)
+    if total > box.w:
+        shift = (total - box.w) / 2
+        box.w = total
+        for m in box.members:
+            if m in final:
+                final[m] = (final[m][0] + shift, final[m][1])
+            if m in contents.get(area, {}):
+                contents[area][m] = (contents[area][m][0] + shift, contents[area][m][1])
     cursor = box.x + (box.w - total) / 2
     top = box.y + box.h + AREA_GAP
     for child in children:
