@@ -1,0 +1,135 @@
+name: 🚀 CI/CD & Release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: ⤵️ Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          # install pyats/genie for parser support
+          pip install "pyats[library]>=24.1" || true
+
+      - name: Run test suite
+        run: pytest tests/ -v
+
+  build-linux:
+    name: ⤵️ Build Linux Binary
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+
+      - name: Install PyInstaller and dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          pip install "pyats[library]>=24.1" || true
+
+      - name: Package with PyInstaller
+        run: |
+          pyinstaller --onefile \
+            --name ospf-topoviz-linux-amd64 \
+            --add-data "config:config" \
+            --collect-all pyvis \
+            --hidden-import "genie" \
+            --hidden-import "pyats" \
+            main.py
+
+      - name: Upload Linux Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ospf-topoviz-linux
+          path: dist/ospf-topoviz-linux-amd64
+
+  release:
+    name: 🚀 GitHub Release
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ospf-topoviz-linux
+          path: bin
+
+      - name: Generate Checksums
+        run: |
+          cd bin
+          chmod +x ospf-topoviz-linux-amd64 2>/dev/null || true
+          sha256sum ospf-topoviz-* > checksums.txt 2>/dev/null || shasum -a 256 ospf-topoviz-* > checksums.txt
+          cat checksums.txt
+
+      - name: Determine Release Tag
+        id: release_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            echo "tag_name=${tag}" >> $GITHUB_OUTPUT
+            echo "release_name=${tag}" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=latest" >> $GITHUB_OUTPUT
+            echo "release_name=Latest Build" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.release_name }}
+          files: |
+            bin/ospf-topoviz-*
+            bin/checksums.txt
+          generate_release_notes: true
+          make_latest: "true"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

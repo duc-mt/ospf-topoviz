@@ -63,11 +63,17 @@ from src.report import (
     render_trace,
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG = BASE_DIR / "config" / "settings.yaml"
-DATA_DIR = BASE_DIR / "data"
-OUTPUT_IMAGE = BASE_DIR / "output" / "topology.png"
-OUTPUT_HTML = BASE_DIR / "output" / "topology.html"
+def _get_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = _get_base_dir()
+DEFAULT_CONFIG = Path("config/settings.yaml") if Path("config/settings.yaml").exists() else (Path("settings.yaml") if Path("settings.yaml").exists() else BASE_DIR / "config" / "settings.yaml")
+DATA_DIR = Path("data") if Path("data").exists() else BASE_DIR / "data"
+OUTPUT_IMAGE = Path("output/topology.png")
+OUTPUT_HTML = Path("output/topology.html")
 
 EXIT_OK, EXIT_ERROR, EXIT_UNEXPECTED, EXIT_SUSPECT, EXIT_FINDINGS = 0, 1, 2, 3, 4
 
@@ -161,9 +167,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="build and diff the topology without saving the new baseline or writing state files",
     )
     ap.add_argument(
-        "-v", "--verbose", action="action", help="enable debug logging"
-    ) if False else ap.add_argument(
-        "-v", "--verbose", action="store_true", help="enable debug logging"
+        "--init",
+        action="store_true",
+        help="generate sample settings.yaml in the current directory and exit",
     )
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap.parse_args(argv)
@@ -417,6 +423,21 @@ def combined_source(result: PollResult) -> RawLSDB:
 
 def run(args: argparse.Namespace) -> int:
     """Execute the full pipeline once."""
+    if args.init:
+        target = Path("settings.yaml")
+        if target.exists():
+            print("[.] settings.yaml already exists, skipping")
+            return EXIT_OK
+        sample_path = (Path(sys._MEIPASS) / "config" / "settings.yaml") if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") else BASE_DIR / "config" / "settings.yaml"
+        if sample_path.exists():
+            target.write_text(sample_path.read_text(encoding="utf-8"), encoding="utf-8")
+            print("[+] Created sample settings.yaml")
+        else:
+            print("[!] Could not locate bundled sample settings.yaml")
+            return EXIT_ERROR
+        print("\nSample configuration created! Edit settings.yaml with your seed IP, device type, and credentials.")
+        return EXIT_OK
+
     if args.trace:
         try:  # fail before any SSH traffic
             ipaddress.ip_network(
@@ -426,7 +447,15 @@ def run(args: argparse.Namespace) -> int:
             raise TrackerError(
                 f"--trace expects an IP address or a prefix, got {args.trace!r}"
             ) from exc
-    settings = load_settings(args.config, required=not args.replay)
+
+    try:
+        settings = load_settings(args.config, required=not args.replay)
+    except Exception as exc:
+        if not args.config.exists():
+            print(f"Error: configuration file '{args.config}' not found.")
+            print("\nTip: Run with '--init' to create a sample settings.yaml template.\n")
+            return EXIT_ERROR
+        raise
 
     # Build every stage first so configuration/import problems surface before any SSH traffic.
     parsers = ParserPool()

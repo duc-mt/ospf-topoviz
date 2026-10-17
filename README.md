@@ -22,7 +22,29 @@ python main.py --replay samples/vyos
 
 ---
 
-## Requirements
+## Standalone Executable (Zero-Dependency & Air-Gapped)
+
+For offline environments on Linux (or Windows WSL2) without needing Python or pip:
+
+1. Download the standalone executable from [GitHub Releases](https://github.com/duc-mt/ospf-lsdb-monitor/releases) under **Latest Build**:
+   - `ospf-topoviz-linux-amd64` (Linux 64-bit)
+2. Place the executable in an empty directory:
+   ```bash
+   chmod +x ospf-topoviz-linux-amd64
+   ```
+3. Generate template configuration:
+   ```bash
+   ./ospf-topoviz-linux-amd64 --init
+   ```
+4. Edit the generated `settings.yaml` with your seed router IP, credentials, and settings.
+5. Run the poll:
+   ```bash
+   ./ospf-topoviz-linux-amd64
+   ```
+
+---
+
+## Requirements (Source / Developer)
 
 | Dependency | Version |
 |---|---|
