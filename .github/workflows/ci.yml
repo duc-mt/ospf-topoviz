@@ -116,18 +116,20 @@ jobs:
           sha256sum ospf-topoviz-* > checksums.txt 2>/dev/null || shasum -a 256 ospf-topoviz-* > checksums.txt
           cat checksums.txt
 
-      - name: Determine Release Tag
+      - name: Determine Release Info
         id: release_info
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
             echo "tag_name=${tag}" >> $GITHUB_OUTPUT
             echo "release_name=${tag}" >> $GITHUB_OUTPUT
-            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "generate_notes=true" >> $GITHUB_OUTPUT
+            touch release_body.md
           else
             echo "tag_name=latest" >> $GITHUB_OUTPUT
             echo "release_name=Latest Build" >> $GITHUB_OUTPUT
-            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "generate_notes=false" >> $GITHUB_OUTPUT
+            git log -1 --format="### 🚀 Latest Automated Build (%cd)%n%n- **Commit**: [\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H)%n- **Message**: %s%n%n[View commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})" --date=short > release_body.md
           fi
 
       - name: Publish GitHub Release
@@ -135,10 +137,11 @@ jobs:
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
           name: ${{ steps.release_info.outputs.release_name }}
+          body_path: release_body.md
           files: |
             bin/ospf-topoviz-*
             bin/checksums.txt
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.release_info.outputs.generate_notes }}
           make_latest: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
