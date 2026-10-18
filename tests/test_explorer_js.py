@@ -21,7 +21,7 @@ from src.graph_engine import TopologyDiff
 from tests.explorer_fixture import realistic
 
 JS_DIR = Path(__file__).parent / "js"
-P = "10.255.255.19".rsplit(".", 1)[0] + "."
+P = "10.255.255."
 
 
 def _node_with_jsdom() -> str | None:

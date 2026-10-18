@@ -339,7 +339,7 @@ def test_items_land_near_the_direction_they_want_to_face():
     wants = {
         "r0": math.pi / 2 - 0.5,
         "r1": math.pi / 2 + 0.55,
-        **{i: None for i in items[2:]},
+        **dict.fromkeys(items[2:]),
     }  # one slot (60 deg) apart
     slots = _assign_slots(items, wants, strong={"r0", "r1"})
     for item in ("r0", "r1"):

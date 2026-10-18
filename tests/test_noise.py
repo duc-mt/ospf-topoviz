@@ -115,7 +115,7 @@ def ids(parsed: dict) -> set[str]:
 
 # ====================================================== LSAs close to MaxAge
 def test_the_default_threshold_is_3500_seconds_just_under_maxage():
-    assert DEFAULT_MAXAGE_IGNORE_AGE == 3500 < 3600
+    assert DEFAULT_MAXAGE_IGNORE_AGE == 3500 and DEFAULT_MAXAGE_IGNORE_AGE < 3600
 
 
 def test_a_leftover_network_lsa_from_the_old_dr_is_not_a_node():

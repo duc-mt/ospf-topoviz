@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 ==============================================================================
 Module Name:   main.py
@@ -12,7 +13,6 @@ Notes:         Requires Python 3.8+
 ==============================================================================
 """
 
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -135,7 +135,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--replay",
         type=Path,
         metavar="DIR",
-        help="read router_lsdb.txt / network_lsdb.txt from DIR instead of connecting to a device",
+        help="read router_lsdb.txt / network_lsdb.txt from DIR instead of connecting to a device; "
+        "the vendor is taken from DIR's name when it is a device type (samples/vyos), else from --device-type "
+        "or the settings file",
     )
     ap.add_argument(
         "--save-raw",
@@ -380,17 +382,51 @@ def make_ingest(parsers: ParserPool):
     return ingest
 
 
+def detect_replay_device_type(replay_dir: Path) -> str | None:
+    """The device type a replay directory is named after, e.g. ``samples/vyos`` -> ``vyos``.
+
+    Only the directory's own name is looked at (case-insensitive, ``.`` and relative paths are resolved
+    first), so a vendor name higher up the path can never be picked up by accident.
+    """
+    known = {t.lower(): t for t in supported_device_types()}
+    return known.get(Path(replay_dir).expanduser().resolve().name.lower())
+
+
+def replay_device_type(args: argparse.Namespace, settings: dict) -> str:
+    """Device type that parses a replay, first match wins.
+
+    ``--device-type``; the vendor named by the replay directory; ``seeds.device_type``; the first
+    ``seeds.devices`` entry's ``device_type``; the legacy ``device:`` block; ``cisco_ios``.
+    """
+    if args.device_type:
+        return args.device_type
+    detected = detect_replay_device_type(args.replay)
+    if detected:
+        return detected
+
+    def section(value: object) -> dict:
+        return value if isinstance(value, dict) else {}
+
+    seeds = section(settings.get("seeds"))
+    devices = seeds.get("devices")
+    first = section(devices[0]) if isinstance(devices, list) and devices else {}
+    legacy = section(settings.get("device"))
+    return (
+        seeds.get("device_type")
+        or first.get("device_type")
+        or legacy.get("device_type")
+        or "cisco_ios"
+    )
+
+
 def build_poller(args: argparse.Namespace, settings: dict, ingest) -> MultiDevicePoller:
     """Pick the data source. Swap or extend here to add API polling or another vendor."""
     if args.replay:
         if args.mode or args.seeds:
             logger.warning("--mode and --seeds do nothing with --replay; ignored")
-        device = (
-            settings.get("device") if isinstance(settings.get("device"), dict) else {}
-        )
         replay = FilePoller(
             args.replay,
-            device_type=args.device_type or device.get("device_type", "cisco_ios"),
+            device_type=replay_device_type(args, settings),
             process_id=parse_process_id(settings.get("ospf_process_id")),
         )
         return MultiDevicePoller(
@@ -451,7 +487,7 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         settings = load_settings(args.config, required=not args.replay)
-    except Exception as exc:
+    except Exception:
         if not args.config.exists():
             print(f"Error: configuration file '{args.config}' not found.")
             print("\nTip: Run with '--init' to create a sample settings.yaml template.\n")

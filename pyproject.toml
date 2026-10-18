@@ -1,0 +1,49 @@
+[project]
+name = "ospf-topoviz"
+version = "1.0.0"
+description = "Multi-vendor OSPF LSDB poller, change detector and topology visualiser"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Mai Tan Duc", email = "ducmai.network@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "netmiko>=4.3,<5",
+    "pyats[library]>=24.1",
+    "networkx>=3.0",
+    "graphviz>=0.20",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.9.0"]
+
+[project.urls]
+Repository = "https://github.com/duc-mt/ospf-lsdb-monitor"
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [".agents", ".gemini", ".venv", "tests/js/node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "BLE", "C4", "UP", "SIM", "RUF", "PLC", "PLR0133"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # function call in default argument
+    "SIM108",  # ternary instead of if/else is not always clearer
+    "PLC0415", # vendor parsers are imported lazily on purpose
+    "RUF001",  # box-drawing / Unicode glyphs are intentional in terminal reports
+    "B905",    # zip() without strict=
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",  # assert
+    "E402",  # imports after sys.path bootstrap
+    "E741",  # ambiguous variable names
+    "B007",  # unused loop variable
+    "C408",  # dict()/list() calls
+    "C416",  # unnecessary comprehension
+    "RUF005", # list concatenation
+    "RUF059", # unused unpacked variable
+    "RUF100", # unused noqa
+]

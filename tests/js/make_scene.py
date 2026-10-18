@@ -1,7 +1,7 @@
 """Print a JSON fixture for ``tests/js/test_simulation.js``: an explorer scene, the rendered page and what the
 Python SPF (``correlation.spf``) computes from every router, so the browser's Dijkstra can be held against it.
 
-Run from the project root:  PYTHONPATH=. python3 tests/js/make_scene.py
+Run from anywhere:  python3 tests/js/make_scene.py
 
 The network (all area 0.0.0.0, router ``10.0.0.N`` is written ``RN``)::
 
@@ -18,6 +18,11 @@ The network (all area 0.0.0.0, router ``10.0.0.N`` is written ``RN``)::
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
+
+# Put the repo root on sys.path so ``src`` imports when this file is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.correlation import correlate, spf
 from src.explorer import build_scene, render_html

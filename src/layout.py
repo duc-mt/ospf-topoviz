@@ -514,7 +514,7 @@ def _pack_pieces(
     to its left (a second column when the first gets taller than the main piece), all sitting on the same
     bottom edge - the edge the ABRs hang from."""
     boxes = [(_bbox(p, sizes), p) for p in pieces]
-    (mx0, my0, mx1, my1), main = boxes[0]
+    (mx0, my0, _, my1), main = boxes[0]
     main_h = my1 - my0
     columns: list[list[tuple[tuple[float, float, float, float], dict]]] = []
     height = 0.0
@@ -757,7 +757,7 @@ def _home_areas(
                 if home.get(o):
                     votes[home[o]] += 1
             if votes:
-                home[n] = sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+                home[n] = min(votes.items(), key=lambda kv: (-kv[1], kv[0]))[0]
     return home
 
 

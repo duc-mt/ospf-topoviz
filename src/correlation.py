@@ -33,6 +33,7 @@ import logging
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -322,17 +323,17 @@ class IpResolver:
         address = ipaddress.IPv4Address(ip)
         candidates: set[str] = set()
         for seg in graph.successors(via):
-            if graph.nodes[seg].get("type") == "network" and graph.nodes[seg].get(
-                "prefix"
+            if (
+                graph.nodes[seg].get("type") == "network"
+                and graph.nodes[seg].get("prefix")
+                and address
+                in ipaddress.ip_network(graph.nodes[seg]["prefix"], strict=False)
             ):
-                if address in ipaddress.ip_network(
-                    graph.nodes[seg]["prefix"], strict=False
-                ):
-                    candidates |= {
-                        r
-                        for r in graph.successors(seg)
-                        if r != via and graph.nodes[r].get("type") == "router"
-                    }
+                candidates |= {
+                    r
+                    for r in graph.successors(seg)
+                    if r != via and graph.nodes[r].get("type") == "router"
+                }
         if len(candidates) == 1:
             return next(iter(candidates))
         # point to point: a subnet the polled router and exactly one adjacent router both advertise
@@ -1141,7 +1142,7 @@ class TraceResult:
     @property
     def edges(self) -> set[frozenset]:
         """Node pairs along the paths, for highlighting on the diagram."""
-        return {frozenset(p) for path in self.paths for p in zip(path, path[1:])}
+        return {frozenset(p) for path in self.paths for p in pairwise(path)}
 
 
 def trace_prefix(
@@ -1237,7 +1238,7 @@ def trace_prefix(
     best_paths: list[list[str]] = []
     hops: set[str] = set()
     for origin in result.origins:
-        for area in sorted(graph.nodes[source].get("areas") or ()) + [None]:
+        for area in [*sorted(graph.nodes[source].get("areas") or ()), None]:
             tree = spf(graph, source, area)
             cost = _origin_cost(tree, origin)
             if cost is None:

@@ -74,8 +74,8 @@ brew install graphviz
 ## Installation
 
 ```bash
-git clone https://github.com/duc-mt/ospf-topoviz.git
-cd ospf-topoviz
+git clone https://github.com/duc-mt/ospf-lsdb-monitor.git
+cd ospf-lsdb-monitor
 
 python3 -m venv venv
 source venv/bin/activate
@@ -399,6 +399,9 @@ python main.py --save-raw samples/my_router
 # Replay it later (no SSH required):
 python main.py --replay samples/my_router --device-type cisco_ios
 ```
+
+A replay directory named after a device type (`samples/vyos`, `samples/arista_eos`, ...) picks that vendor
+automatically, so `--device-type` is only needed for other directory names.
 
 ---
 

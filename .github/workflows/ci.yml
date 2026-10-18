@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -45,6 +45,11 @@ jobs:
           # install pyats/genie for parser support
           pip install "pyats[library]>=24.1" || true
           npm install --prefix tests/js
+
+      - name: Lint with ruff
+        run: |
+          pip install "ruff>=0.9.0"
+          ruff check .
 
       - name: Run JS simulation tests
         run: node tests/js/test_simulation.js
@@ -81,7 +86,6 @@ jobs:
           pyinstaller --onefile \
             --name ospf-topoviz-linux-amd64 \
             --add-data "config:config" \
-            --collect-all pyvis \
             --hidden-import "genie" \
             --hidden-import "pyats" \
             main.py

@@ -12,7 +12,9 @@ import re
 import shutil
 import sys
 import textwrap
-from typing import Any, Sequence
+from collections.abc import Sequence
+from itertools import pairwise
+from typing import Any
 
 # ANSI escape codes
 ANSI_RESET = "\033[0m"
@@ -681,7 +683,7 @@ def render_trace(trace, graph) -> str:
 
     for number, path in enumerate(trace.paths[:4], start=1):
         rows, total = [["0", name(path[0]), "-", "-", "0"]], 0
-        for step, (u, v) in enumerate(zip(path, path[1:]), start=1):
+        for step, (u, v) in enumerate(pairwise(path), start=1):
             edge = graph.edges[u, v]
             cost = edge.get("metric", 0)
             total += cost

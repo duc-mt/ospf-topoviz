@@ -826,7 +826,8 @@ class TopologyVisualizer:
             VisualizationError: If Graphviz is missing or fails.
         """
         if self.interactive:
-            from src.explorer import write_explorer  # noqa: PLC0415 - only needed for this output type
+            # Lazy import: only needed for this output type.
+            from src.explorer import write_explorer
 
             path = write_explorer(
                 self.output_path,

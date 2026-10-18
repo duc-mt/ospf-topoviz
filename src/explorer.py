@@ -67,7 +67,7 @@ def _title_and_sub(
 def _node_size(kind: str, title: str, sub: list[str]) -> tuple[float, float]:
     """Room for the text (the layout spaces nodes by these sizes). A diamond is narrow where its text
     sits, so a network needs to be much wider than its title."""
-    widest = max([len(title), *map(len, sub)] or [0])
+    widest = max([len(title), *map(len, sub)])
     lines = 1 + len(sub)
     if kind == "router":
         return max(140.0, 8.4 * widest + 30), 26.0 + 17.0 * lines

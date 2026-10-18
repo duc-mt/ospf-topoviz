@@ -413,7 +413,7 @@ class PollingOptions:
     routes: bool = True  # also read each router's OSPF routing table (to check it against the LSDB)
 
     @classmethod
-    def from_settings(cls, section: dict[str, Any] | None) -> "PollingOptions":
+    def from_settings(cls, section: dict[str, Any] | None) -> PollingOptions:
         """Read the ``polling:`` mapping from settings.yaml."""
         if section is None:
             return cls()

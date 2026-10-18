@@ -90,7 +90,7 @@ def parse_routes(fmt: str, raw: str, process_id: str | None = None) -> list[OSPF
 
 
 def _is_multicast(prefix: str) -> bool:
-    return 224 <= int(prefix.split(".")[0]) <= 239
+    return 224 <= int(prefix.split(".", maxsplit=1)[0]) <= 239
 
 
 def _next_hop(text: str) -> NextHop | None:
