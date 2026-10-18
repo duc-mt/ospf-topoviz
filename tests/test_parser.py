@@ -27,7 +27,7 @@ from src.vendors.base import (
 
 
 def _parser() -> OSPFParser:
-    return OSPFParser("cisco_ios")
+    return OSPFParser("vyos")
 
 
 def _simple_lsdb() -> Lsdb:
@@ -172,7 +172,7 @@ def test_resolved_flag_set_for_lsa_owner():
 def test_metadata_fields_are_populated():
     parsed = _parser()._build(_simple_lsdb())
     meta = parsed["metadata"]
-    assert meta["device_type"] == "cisco_ios"
+    assert meta["device_type"] == "vyos"
     assert meta["router_lsas"] == 2
     assert meta["network_lsas"] == 1
     assert "0.0.0.0" in meta["areas"]

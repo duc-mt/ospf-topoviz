@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from src.config import ConfigError
 from src.parser import OSPFParser
 from src.poller import DevicePoller, FilePoller, PollerError
 from src.vendors import get_profile
+
+HAS_GENIE = importlib.util.find_spec("genie") is not None
 from src.vendors.base import (
     ROUTE_E1,
     ROUTE_E2,
@@ -344,6 +348,8 @@ def test_unknown_route_format_is_an_error():
 
 # --------------------------------------------- through the platform adapters
 def test_parser_dispatches_routes_per_platform():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping Genie platform route tests")
     assert len(OSPFParser("cisco_ios").parse_routes(IOS)) == 5
     assert len(OSPFParser("arista_eos").parse_routes(EOS)) == 3
     assert len(OSPFParser("vyos").parse_routes(FRR)) == 5
@@ -353,11 +359,15 @@ def test_parser_dispatches_routes_per_platform():
 
 def test_platforms_without_a_route_parser_say_so():
     assert OSPFParser("huawei").parse_routes("anything") is None
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping cisco_xr")
     assert OSPFParser("cisco_xr").parse_routes("anything") is None
 
 
 # ----------------------------------------------------- extended neighbours
 def test_ios_neighbors_carry_priority_dead_time_and_role():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping cisco_ios neighbors")
     text = """Neighbor ID     Pri   State           Dead Time   Address         Interface
 10.0.0.2          1   FULL/DR         00:00:33    10.12.0.2       GigabitEthernet0/1
 10.0.0.3          0   2WAY/DROTHER    00:00:38    10.13.0.3       GigabitEthernet0/2
@@ -410,6 +420,8 @@ JUNOS_DETAIL = """Address          Interface              State           ID    
 
 
 def test_junos_neighbor_detail_gives_roles_priority_and_dead_time():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping juniper_junos neighbors")
     a, b, c = OSPFParser("juniper_junos").parse_neighbors(JUNOS_DETAIL)
     assert (a.state, a.role, a.priority, a.dead_time, a.area) == (
         "Full",
@@ -423,6 +435,8 @@ def test_junos_neighbor_detail_gives_roles_priority_and_dead_time():
 
 
 def test_junos_plain_neighbor_table_still_parses():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping juniper_junos neighbors")
     text = (
         "Address          Interface              State           ID               Pri  Dead\n"
         "10.12.0.2        ge-0/0/0.0             Full            10.0.0.2         128    37\n"
@@ -457,6 +471,8 @@ NXOS_DETAIL = """ Neighbor 10.0.0.2, interface address 10.12.0.2
 
 
 def test_nxos_neighbors():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping cisco_nxos neighbors")
     a, b = OSPFParser("cisco_nxos").parse_neighbors(NXOS_DETAIL)
     assert (
         a.router_id,

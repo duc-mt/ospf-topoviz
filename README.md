@@ -299,7 +299,12 @@ The explorer needs a current browser; the layout itself is computed by Python, s
 
 ### Credentials via environment variables
 
-With the single `device:` block these override anything in `settings.yaml`; with `seeds:` they fill in whatever a device leaves empty (see *Multi-seed polling*). Use them in CI or to avoid storing passwords on disk:
+> [!NOTE]
+> **Precedence Rules:**
+> - In **single-device** mode (`device:` block), `OSPF_MONITOR_*` environment variables **override** the values in `settings.yaml`.
+> - In **multi-seed** mode (`seeds.devices`), each device's explicit configuration takes precedence first (`device.password` > `OSPF_MONITOR_*` > shared `seeds.password` > legacy `device:` block).
+
+Use them in CI or to avoid storing passwords on disk:
 
 ```bash
 export OSPF_MONITOR_USERNAME=admin

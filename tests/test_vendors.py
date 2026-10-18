@@ -26,6 +26,8 @@ from src.vendors.base import ParserError, dotted_mask, link_kind
 
 SAMPLES = Path(__file__).resolve().parents[1] / "samples"
 
+HAS_GENIE = importlib.util.find_spec("genie") is not None
+
 EXPECTED_NODES = {"10.0.0.1", "10.0.0.2", "10.0.0.3", "net-192.168.1.1"}
 EXPECTED_EDGES = {
     ("10.0.0.1", "10.0.0.2", 10, "point-to-point"),
@@ -45,6 +47,8 @@ def load(vendor: str) -> tuple[str, str]:
 
 @pytest.mark.parametrize("vendor", VENDORS)
 def test_vendor_sample_yields_canonical_topology(vendor):
+    if vendor in ("cisco_ios", "juniper_junos") and not HAS_GENIE:
+        pytest.skip(f"pyATS/Genie is not installed; skipping {vendor}")
     parsed = OSPFParser(vendor).parse(*load(vendor))
     assert {n["id"] for n in parsed["nodes"]} == EXPECTED_NODES
     assert {
@@ -63,6 +67,8 @@ def test_vendor_sample_yields_canonical_topology(vendor):
 
 @pytest.mark.parametrize("vendor", ["cisco_ios", "huawei"])
 def test_process_filter_matches_and_rejects(vendor):
+    if vendor == "cisco_ios" and not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping cisco_ios")
     router, network = load(vendor)
     assert OSPFParser(vendor, process_id=1).parse(router, network)["nodes"]
     with pytest.raises(ParserError, match="process 99"):
@@ -92,6 +98,8 @@ def test_arista_summary_view_fails_loudly_with_hint():
 
 
 def test_junos_multi_area_is_split_per_area():
+    if not HAS_GENIE:
+        pytest.skip("pyATS/Genie is not installed; skipping juniper_junos")
     router, network = load("juniper_junos")
     # An ABR prints one block per area; give R3's LSA its own area 0.0.0.1 block.
     head = router.split("Router  *10.0.0.1")[0]
@@ -243,6 +251,8 @@ EXPECTED_INTERFACES = {
 @pytest.mark.parametrize("vendor", VENDORS)
 def test_vendor_sample_reports_interface_addresses(vendor):
     """'Link Data' (the router's own interface address) survives every adapter, stubs excluded."""
+    if vendor in ("cisco_ios", "juniper_junos") and not HAS_GENIE:
+        pytest.skip(f"pyATS/Genie is not installed; skipping {vendor}")
     parsed = OSPFParser(vendor).parse(*load(vendor))
     got = {
         (e["source"], e["target"]): e.get("interface_address")

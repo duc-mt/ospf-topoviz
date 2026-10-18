@@ -33,7 +33,10 @@ import logging
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.poller import SeedResult
 
 import networkx as nx
 
@@ -965,7 +968,7 @@ def _seed_records(
 def audit_area_coverage(
     graph: nx.DiGraph,
     details: Sequence[SourceDetail] = (),
-    seeds: Sequence[Any] = (),
+    seeds: Sequence[SeedResult | dict[str, Any] | Any] = (),
 ) -> AreaCoverage:
     """Report coverage at the level of OSPF *areas*, not individual routers.
 
@@ -1048,9 +1051,12 @@ def audit_area_coverage(
                 f"({', '.join(seen) or 'none'}), so it may be the way into area {area}."
             )
             miss.candidates.append(abr)
-        miss.candidates = list(dict.fromkeys(miss.candidates))[:MAX_CANDIDATES]
+        miss.candidates = [
+            c for c in dict.fromkeys(miss.candidates) if c
+        ][:MAX_CANDIDATES]
         missing.append(miss)
     if hidden and not named:
+        raw_candidates = [abr for abr, _seen in hidden]
         missing.append(
             MissingArea(
                 None,
@@ -1059,7 +1065,7 @@ def audit_area_coverage(
                     f"{', '.join(seen) or '?'} is visible on it."
                     for abr, seen in hidden
                 ],
-                [abr for abr, _seen in hidden][:MAX_CANDIDATES],
+                [c for c in dict.fromkeys(raw_candidates) if c][:MAX_CANDIDATES],
             )
         )
     return AreaCoverage(
@@ -1072,7 +1078,7 @@ def correlate(
     graph: nx.DiGraph,
     details: Sequence[SourceDetail] = (),
     previous: nx.DiGraph | None = None,
-    seeds: Sequence[Any] = (),
+    seeds: Sequence[SeedResult | dict[str, Any] | Any] = (),
 ) -> CorrelationReport:
     """Run every cross-check available for the data that was collected.
 

@@ -172,7 +172,7 @@ class OSPFRoute:
 
     @property
     def prefix_length(self) -> int:
-        return ipaddress.IPv4Network(f"{self.prefix}/{self.mask}").prefixlen
+        return ipaddress.IPv4Network(f"{self.prefix}/{self.mask}", strict=False).prefixlen
 
     @property
     def cidr(self) -> str:

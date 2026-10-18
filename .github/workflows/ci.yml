@@ -33,12 +33,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y graphviz
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt pytest
           # install pyats/genie for parser support
           pip install "pyats[library]>=24.1" || true
+          npm install --prefix tests/js
+
+      - name: Run JS simulation tests
+        run: node tests/js/test_simulation.js
 
       - name: Run test suite
         run: pytest tests/ -v
