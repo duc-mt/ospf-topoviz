@@ -17,11 +17,18 @@ set "ROOT_DIR=%SCRIPT_DIR%..\"
 set "VENV_DIR=%ROOT_DIR%.venv"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 
-REM 1. Initialize config\settings.yaml from example if missing
+REM 1. Initialize config\settings.yaml and .env from examples if missing
 if not exist "%ROOT_DIR%config\settings.yaml" (
     if exist "%ROOT_DIR%config\settings.yaml.example" (
         copy "%ROOT_DIR%config\settings.yaml.example" "%ROOT_DIR%config\settings.yaml" >nul
         echo Initialized config\settings.yaml from template.
+    )
+)
+
+if not exist "%ROOT_DIR%.env" (
+    if exist "%ROOT_DIR%.env.example" (
+        copy "%ROOT_DIR%.env.example" "%ROOT_DIR%.env" >nul
+        echo Initialized .env from template.
     )
 )
 

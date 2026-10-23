@@ -15,10 +15,15 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 
-# 1. Initialize config/settings.yaml from example if missing
+# 1. Initialize config/settings.yaml and .env from examples if missing
 if [ ! -f "$ROOT_DIR/config/settings.yaml" ] && [ -f "$ROOT_DIR/config/settings.yaml.example" ]; then
     cp "$ROOT_DIR/config/settings.yaml.example" "$ROOT_DIR/config/settings.yaml"
     echo "Initialized config/settings.yaml from template."
+fi
+
+if [ ! -f "$ROOT_DIR/.env" ] && [ -f "$ROOT_DIR/.env.example" ]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    echo "Initialized .env from template."
 fi
 
 # 2. Check and bootstrap virtual environment if missing
