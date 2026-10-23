@@ -34,6 +34,7 @@ from src.config import (
     stale_lsa_age,
 )
 from src.graph_engine import GraphEngine, GuardConfig, TopologyDiff
+from src.notifier import TelegramConfig, TelegramNotifier
 from src.parser import (
     DEFAULT_MAXAGE_IGNORE_AGE,
     DEFAULT_STALE_AGE,
@@ -607,6 +608,10 @@ def run(args: argparse.Namespace) -> int:
         page.scope = scope
         print(f" Explorer  : {page.render(graph, diff, trace=trace)}")
     print()
+
+    # 5. Dispatch alerts if configured and anomalies/findings exist
+    dispatch_alerts(settings, diff, graph, image_path=str(image) if image else None)
+
     if args.dry_run:
         return (
             EXIT_FINDINGS
@@ -617,6 +622,81 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_SUSPECT
     return (
         EXIT_FINDINGS if args.fail_on_findings and diff.critical_findings else EXIT_OK
+    )
+
+
+def dispatch_alerts(
+    settings: dict,
+    diff: TopologyDiff,
+    graph: dict,
+    image_path: str | None = None,
+) -> None:
+    """Send notifications to configured channels if anomalies or state changes exist."""
+    alerting_cfg = settings.get("alerting") or {}
+    telegram_cfg_dict = alerting_cfg.get("telegram") if isinstance(alerting_cfg, dict) else {}
+    if not isinstance(telegram_cfg_dict, dict):
+        telegram_cfg_dict = {}
+
+    # Inherit top-level alerting settings if not overridden
+    if isinstance(alerting_cfg, dict):
+        for key in ("enabled", "min_severity", "cooldown_seconds"):
+            if key in alerting_cfg and key not in telegram_cfg_dict:
+                telegram_cfg_dict[key] = alerting_cfg[key]
+
+    config = TelegramConfig.from_dict(telegram_cfg_dict)
+    if not config.enabled:
+        return
+
+    notifier = TelegramNotifier(config)
+
+    # Determine anomalies & changes
+    changes = []
+    if diff.added_nodes:
+        changes.append(f"Added nodes: {len(diff.added_nodes)}")
+    if diff.removed_nodes:
+        changes.append(f"Removed nodes: {len(diff.removed_nodes)}")
+    if diff.added_edges:
+        changes.append(f"Added links: {len(diff.added_edges)}")
+    if diff.removed_edges:
+        changes.append(f"Removed links: {len(diff.removed_edges)}")
+
+    findings = diff.findings or []
+    critical_findings = [f for f in findings if getattr(f, "severity", None) == "critical"]
+    warning_findings = [f for f in findings if getattr(f, "severity", None) == "warning"]
+
+    # Only send alert if there are findings, state diffs, or unverified links
+    if not (changes or findings or not diff.baseline_updated):
+        return
+
+    level = "critical" if (critical_findings or not diff.baseline_updated) else "warning"
+    title = "OSPF Topology Anomaly Detected" if findings else "OSPF Topology Changed"
+
+    summary_lines = []
+    if not diff.baseline_updated:
+        summary_lines.append("⚠️ Baseline NOT updated (guard threshold tripped)")
+    if changes:
+        summary_lines.append("Topology diff: " + ", ".join(changes))
+    if critical_findings:
+        summary_lines.append(f"Critical findings ({len(critical_findings)}):")
+        for f in critical_findings[:3]:
+            summary_lines.append(f" - {getattr(f, 'title', str(f))}")
+    elif warning_findings:
+        summary_lines.append(f"Warnings ({len(warning_findings)}):")
+        for f in warning_findings[:3]:
+            summary_lines.append(f" - {getattr(f, 'title', str(f))}")
+
+    message = "\n".join(summary_lines)
+    metadata = {
+        "target": "OSPF Backbone",
+        "hint": "Check OSPF TopoViz explorer HTML for complete details.",
+    }
+
+    notifier.send_alert(
+        title=title,
+        message=message,
+        level=level,
+        attachment_path=image_path,
+        metadata=metadata,
     )
 
 

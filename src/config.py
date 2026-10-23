@@ -378,3 +378,13 @@ def device_entries(
 
     # Stable: equal priorities keep the order they were written in.
     return sorted(resolved, key=lambda e: e["priority"])
+
+
+def get_alerting_config(settings: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract alerting configuration from settings dict."""
+    settings = settings or {}
+    alerting = settings.get("alerting") or {}
+    if not isinstance(alerting, dict):
+        return {}
+    return alerting
+

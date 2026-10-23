@@ -104,3 +104,18 @@ visualization:
   direction: LR              # LR (Left to Right) or TB (Top to Bottom)
   show_costs: true
   show_addresses: true
+
+# Alerting & Notifications (Telegram, Webhooks)
+alerting:
+  enabled: false             # Master toggle for notifications
+  min_severity: warning      # info | warning | critical
+  cooldown_seconds: 300      # Suppress duplicate alerts for 5 minutes
+  telegram:
+    enabled: false
+    bot_token: ""            # Or env TELEGRAM_BOT_TOKEN
+    chat_id: ""              # Or env TELEGRAM_CHAT_ID (User ID or Group ID, e.g. -100...)
+    thread_id: null          # Optional: Supergroup forum topic ID (or env TELEGRAM_MESSAGE_THREAD_ID)
+    silent: false            # Send notification without sound (or env TELEGRAM_SILENT)
+    send_image: true         # Attach topology diagram if available (or env TELEGRAM_SEND_IMAGE)
+    proxy: null              # Optional: HTTP/HTTPS proxy e.g. "http://proxy:8080" (or env TELEGRAM_PROXY_URL)
+
