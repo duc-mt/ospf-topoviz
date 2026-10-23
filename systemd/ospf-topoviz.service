@@ -1,0 +1,27 @@
+[Unit]
+Description=OSPF TopoViz - Network Discovery & Alerting Pipeline
+Documentation=https://github.com/m-duc/ospf-topoviz
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nms-net
+Group=nms-net
+WorkingDirectory=/home/nms-net/ospf-topoviz
+EnvironmentFile=-/home/nms-net/ospf-topoviz/.env
+ExecStart=/home/nms-net/ospf-topoviz/.venv/bin/python /home/nms-net/ospf-topoviz/main.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=900
+Restart=no
+
+# Hardening measures
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/nms-net/ospf-topoviz/output /home/nms-net/ospf-topoviz/data /tmp
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

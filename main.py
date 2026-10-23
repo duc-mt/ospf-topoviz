@@ -27,6 +27,7 @@ from src import TrackerError, __version__
 from src.correlation import trace_prefix
 from src.config import (
     SEED_MODES,
+    ConfigError,
     load_settings,
     maxage_lsa_age,
     parse_process_id,
@@ -64,6 +65,7 @@ from src.report import (
     render_trace,
 )
 
+
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -71,7 +73,15 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR = _get_base_dir()
-DEFAULT_CONFIG = Path("config/settings.yaml") if Path("config/settings.yaml").exists() else (Path("settings.yaml") if Path("settings.yaml").exists() else BASE_DIR / "config" / "settings.yaml")
+DEFAULT_CONFIG = (
+    Path("config/settings.yaml")
+    if Path("config/settings.yaml").exists()
+    else (
+        Path("settings.yaml")
+        if Path("settings.yaml").exists()
+        else BASE_DIR / "config" / "settings.yaml"
+    )
+)
 DATA_DIR = Path("data") if Path("data").exists() else BASE_DIR / "data"
 OUTPUT_IMAGE = Path("output/topology.png")
 OUTPUT_HTML = Path("output/topology.html")
@@ -173,6 +183,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--init",
         action="store_true",
         help="generate sample settings.yaml in the current directory and exit",
+    )
+    ap.add_argument(
+        "--test-telegram",
+        action="store_true",
+        help="send a test alert message to Telegram using current configuration and exit",
     )
     ap.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -459,22 +474,80 @@ def combined_source(result: PollResult) -> RawLSDB:
     )
 
 
-def run(args: argparse.Namespace) -> int:
+def build_telegram_notifier(settings: dict | None = None) -> TelegramNotifier:
+    """Build a TelegramNotifier instance from settings with env overrides."""
+    settings = settings or {}
+    alerting_cfg = settings.get("alerting") or {}
+    telegram_cfg_dict = (
+        alerting_cfg.get("telegram") if isinstance(alerting_cfg, dict) else {}
+    )
+    if not isinstance(telegram_cfg_dict, dict):
+        telegram_cfg_dict = {}
+
+    if isinstance(alerting_cfg, dict):
+        for key in ("enabled", "min_severity", "cooldown_seconds"):
+            if key in alerting_cfg and key not in telegram_cfg_dict:
+                telegram_cfg_dict[key] = alerting_cfg[key]
+
+    config = TelegramConfig.from_dict(telegram_cfg_dict)
+    return TelegramNotifier(config)
+
+
+def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> int:
     """Execute the full pipeline once."""
     if args.init:
         target = Path("settings.yaml")
         if target.exists():
             print("[.] settings.yaml already exists, skipping")
             return EXIT_OK
-        sample_path = (Path(sys._MEIPASS) / "config" / "settings.yaml") if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") else BASE_DIR / "config" / "settings.yaml"
+        sample_path = (
+            (Path(sys._MEIPASS) / "config" / "settings.yaml")
+            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
+            else BASE_DIR / "config" / "settings.yaml"
+        )
         if sample_path.exists():
             target.write_text(sample_path.read_text(encoding="utf-8"), encoding="utf-8")
             print("[+] Created sample settings.yaml")
         else:
             print("[!] Could not locate bundled sample settings.yaml")
             return EXIT_ERROR
-        print("\nSample configuration created! Edit settings.yaml with your seed IP, device type, and credentials.")
+        print(
+            "\nSample configuration created! Edit settings.yaml with your seed IP, device type, and credentials."
+        )
         return EXIT_OK
+
+    if getattr(args, "test_telegram", False):
+        try:
+            raw_settings = load_settings(args.config, required=False)
+        except (ConfigError, OSError):
+            raw_settings = {}
+        if notifier is None:
+            notifier = build_telegram_notifier(raw_settings)
+        if not notifier.config.enabled:
+            print(
+                "[!] Telegram alerting is disabled. Set TELEGRAM_ENABLED=true in .env "
+                "or config/settings.yaml."
+            )
+            return EXIT_ERROR
+        if not notifier.config.bot_token or not notifier.config.chat_id:
+            print("[!] Telegram bot_token or chat_id is missing.")
+            return EXIT_ERROR
+        print(
+            f"[*] Sending test alert to Telegram chat ID {notifier.config.chat_id} ..."
+        )
+        success = notifier.send_alert(
+            title="Manual Test Alert",
+            message="Telegram alerting pipeline test triggered manually via --test-telegram.",
+            level="warning",
+            metadata={"source": "Manual CLI", "status": "Operational"},
+        )
+        if success:
+            print("[+] Test alert successfully delivered to Telegram!")
+            return EXIT_OK
+        print(
+            "[!] Failed to deliver test alert. Check credentials, chat ID, and network logs."
+        )
+        return EXIT_ERROR
 
     if args.trace:
         try:  # fail before any SSH traffic
@@ -491,7 +564,9 @@ def run(args: argparse.Namespace) -> int:
     except Exception:
         if not args.config.exists():
             print(f"Error: configuration file '{args.config}' not found.")
-            print("\nTip: Run with '--init' to create a sample settings.yaml template.\n")
+            print(
+                "\nTip: Run with '--init' to create a sample settings.yaml template.\n"
+            )
             return EXIT_ERROR
         raise
 
@@ -610,7 +685,13 @@ def run(args: argparse.Namespace) -> int:
     print()
 
     # 5. Dispatch alerts if configured and anomalies/findings exist
-    dispatch_alerts(settings, diff, graph, image_path=str(image) if image else None)
+    dispatch_alerts(
+        settings,
+        diff,
+        graph,
+        image_path=str(image) if image else None,
+        notifier=notifier,
+    )
 
     if args.dry_run:
         return (
@@ -630,24 +711,14 @@ def dispatch_alerts(
     diff: TopologyDiff,
     graph: dict,
     image_path: str | None = None,
+    notifier: TelegramNotifier | None = None,
 ) -> None:
     """Send notifications to configured channels if anomalies or state changes exist."""
-    alerting_cfg = settings.get("alerting") or {}
-    telegram_cfg_dict = alerting_cfg.get("telegram") if isinstance(alerting_cfg, dict) else {}
-    if not isinstance(telegram_cfg_dict, dict):
-        telegram_cfg_dict = {}
+    if notifier is None:
+        notifier = build_telegram_notifier(settings)
 
-    # Inherit top-level alerting settings if not overridden
-    if isinstance(alerting_cfg, dict):
-        for key in ("enabled", "min_severity", "cooldown_seconds"):
-            if key in alerting_cfg and key not in telegram_cfg_dict:
-                telegram_cfg_dict[key] = alerting_cfg[key]
-
-    config = TelegramConfig.from_dict(telegram_cfg_dict)
-    if not config.enabled:
+    if not notifier.config.enabled:
         return
-
-    notifier = TelegramNotifier(config)
 
     # Determine anomalies & changes
     changes = []
@@ -661,43 +732,67 @@ def dispatch_alerts(
         changes.append(f"Removed links: {len(diff.removed_edges)}")
 
     findings = diff.findings or []
-    critical_findings = [f for f in findings if getattr(f, "severity", None) == "critical"]
-    warning_findings = [f for f in findings if getattr(f, "severity", None) == "warning"]
+    critical_findings = [
+        f for f in findings if getattr(f, "severity", None) == "critical"
+    ]
+    warning_findings = [
+        f for f in findings if getattr(f, "severity", None) == "warning"
+    ]
 
     # Only send alert if there are findings, state diffs, or unverified links
-    if not (changes or findings or not diff.baseline_updated):
-        return
+    if changes or findings or not diff.baseline_updated:
+        level = (
+            "critical"
+            if (critical_findings or not diff.baseline_updated)
+            else "warning"
+        )
+        title = (
+            "OSPF Topology Anomaly Detected" if findings else "OSPF Topology Changed"
+        )
 
-    level = "critical" if (critical_findings or not diff.baseline_updated) else "warning"
-    title = "OSPF Topology Anomaly Detected" if findings else "OSPF Topology Changed"
+        summary_lines = []
+        if not diff.baseline_updated:
+            summary_lines.append("⚠️ Baseline NOT updated (guard threshold tripped)")
+        if changes:
+            summary_lines.append("Topology diff: " + ", ".join(changes))
+        if critical_findings:
+            summary_lines.append(f"Critical findings ({len(critical_findings)}):")
+            for f in critical_findings[:3]:
+                summary_lines.append(f" - {getattr(f, 'title', str(f))}")
+        elif warning_findings:
+            summary_lines.append(f"Warnings ({len(warning_findings)}):")
+            for f in warning_findings[:3]:
+                summary_lines.append(f" - {getattr(f, 'title', str(f))}")
 
-    summary_lines = []
-    if not diff.baseline_updated:
-        summary_lines.append("⚠️ Baseline NOT updated (guard threshold tripped)")
-    if changes:
-        summary_lines.append("Topology diff: " + ", ".join(changes))
-    if critical_findings:
-        summary_lines.append(f"Critical findings ({len(critical_findings)}):")
-        for f in critical_findings[:3]:
-            summary_lines.append(f" - {getattr(f, 'title', str(f))}")
-    elif warning_findings:
-        summary_lines.append(f"Warnings ({len(warning_findings)}):")
-        for f in warning_findings[:3]:
-            summary_lines.append(f" - {getattr(f, 'title', str(f))}")
+        message = "\n".join(summary_lines)
+        metadata = {
+            "target": "OSPF Backbone",
+            "hint": "Check OSPF TopoViz explorer HTML for complete details.",
+        }
 
-    message = "\n".join(summary_lines)
-    metadata = {
-        "target": "OSPF Backbone",
-        "hint": "Check OSPF TopoViz explorer HTML for complete details.",
-    }
-
-    notifier.send_alert(
-        title=title,
-        message=message,
-        level=level,
-        attachment_path=image_path,
-        metadata=metadata,
-    )
+        notifier.send_alert(
+            title=title,
+            message=message,
+            level=level,
+            attachment_path=image_path,
+            metadata=metadata,
+        )
+    else:
+        # Topology in sync: dispatch info heartbeat (delivered if min_severity="info")
+        node_count = len(graph.get("nodes", []))
+        edge_count = len(graph.get("edges", []))
+        notifier.send_alert(
+            title="OSPF Topology In Sync",
+            message=(
+                f"OSPF topology verified: {node_count} router(s), "
+                f"{edge_count} link(s) active. Baseline in sync, 0 anomalies."
+            ),
+            level="info",
+            metadata={
+                "target": "OSPF Backbone",
+                "hint": "Topology diagram and baseline snapshot updated.",
+            },
+        )
 
 
 def build_parsed_topology(
@@ -719,18 +814,39 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+    notifier: TelegramNotifier | None = None
     try:
-        return run(args)
+        try:
+            raw_settings = load_settings(args.config, required=False)
+            notifier = build_telegram_notifier(raw_settings)
+        except (ConfigError, OSError):
+            notifier = None
+
+        return run(args, notifier=notifier)
     except TrackerError as exc:
         logger.error("%s", exc)
+        if notifier and notifier.config.enabled:
+            notifier.send_alert(
+                title="OSPF Pipeline Aborted",
+                message=str(exc),
+                level="critical",
+                metadata={"hint": "Tracker error encountered during execution."},
+            )
         return EXIT_ERROR
     except KeyboardInterrupt:
         logger.error("Interrupted")
         return 130
     except (
         Exception
-    ):  # last-resort guard: log the traceback, return a clean failure code
+    ) as exc:  # last-resort guard: log the traceback, return a clean failure code
         logger.exception("Unexpected error")
+        if notifier and notifier.config.enabled:
+            notifier.send_alert(
+                title="OSPF Pipeline Crash",
+                message=f"Unexpected fatal error: {exc}",
+                level="critical",
+                metadata={"hint": "Check stack trace in logs or journalctl."},
+            )
         return EXIT_UNEXPECTED
 
 

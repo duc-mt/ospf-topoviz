@@ -1,0 +1,13 @@
+[Unit]
+Description=OSPF TopoViz - Recurring Topology Discovery Timer
+Documentation=https://github.com/m-duc/ospf-topoviz
+Requires=ospf-topoviz.service
+
+[Timer]
+OnBootSec=3min
+OnCalendar=*:0/15
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

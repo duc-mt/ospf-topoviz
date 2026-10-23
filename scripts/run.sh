@@ -26,7 +26,15 @@ if [ ! -f "$ROOT_DIR/.env" ] && [ -f "$ROOT_DIR/.env.example" ]; then
     echo "Initialized .env from template."
 fi
 
-# 2. Check and bootstrap virtual environment if missing
+# 2. Export environment variables from .env if present
+if [ -f "$ROOT_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ROOT_DIR/.env"
+    set +a
+fi
+
+# 3. Check and bootstrap virtual environment if missing
 if [ ! -f "$VENV_PYTHON" ]; then
     echo "Virtual environment not found in .venv. Initializing..."
 

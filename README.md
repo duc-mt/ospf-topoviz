@@ -19,6 +19,7 @@ python main.py --replay samples/vyos
 - **Readable diagrams** — one line per link with the cost and interface address at each end, area clusters, automatic layout direction, diff highlighting
 - **Atomic state rotation** — `current_state.json` → `previous_state.json`, crash-safe
 - **Credential-safe** — passwords never have to touch disk; `OSPF_MONITOR_*` env vars override the config file
+- **Telegram Alerting & Production Scheduling** — automated dispatch of topology changes, cross-check anomaly findings, and crash alerts, with non-blocking concurrency locking. See [docs/TELEGRAM_ALERTING.md](docs/TELEGRAM_ALERTING.md).
 
 ---
 
@@ -493,6 +494,24 @@ With neighbour and routing-table data the run adds the cross-check tables (shown
 
   ✔ Stable Topology  │  Diffs: 0  │  Nodes: 4  │  Links: 6  │  Findings: 2 critical, 1 warning
 ```
+
+---
+
+## Telegram Alerting & Production Scheduling
+
+OSPF TopoViz includes a decoupled Telegram notification dispatcher that alerts on topology diffs, unhandled pipeline crashes, and neighbor/route findings:
+
+- **Instant Connectivity Test**: Verify bot credentials and chat IDs immediately:
+  ```bash
+  ./run --test-telegram
+  ```
+- **Concurrency-Safe Cron**: Use [`scripts/run_ospf_cron.sh`](scripts/run_ospf_cron.sh) with non-blocking `flock` to avoid overlapping discovery jobs:
+  ```cron
+  */15 * * * * /home/nms-net/ospf-topoviz/scripts/run_ospf_cron.sh >> /var/log/ospf-topoviz-cron.log 2>&1
+  ```
+- **Systemd Timer & Service**: Ready-to-use hardened unit files in [`systemd/`](systemd/).
+
+For bot provisioning, forum topics, cooldown damping, and proxy configuration, refer to the **[Telegram Alerting Operations Guide](docs/TELEGRAM_ALERTING.md)**.
 
 ---
 
