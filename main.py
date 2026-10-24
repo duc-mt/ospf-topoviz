@@ -22,6 +22,7 @@ import re
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from src import TrackerError, __version__
 from src.correlation import trace_prefix
@@ -706,6 +707,29 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     )
 
 
+def _finding_severity(finding: Any) -> str:
+    """Safely extract severity string from finding dict or object."""
+    if isinstance(finding, dict):
+        return str(finding.get("severity") or "").strip().lower()
+    return str(getattr(finding, "severity", "") or "").strip().lower()
+
+
+def _finding_text(finding: Any) -> str:
+    """Safely extract message or title from finding dict or object."""
+    if isinstance(finding, dict):
+        return str(
+            finding.get("message")
+            or finding.get("title")
+            or finding.get("kind")
+            or str(finding)
+        )
+    return str(
+        getattr(finding, "message", None)
+        or getattr(finding, "title", None)
+        or str(finding)
+    )
+
+
 def dispatch_alerts(
     settings: dict,
     diff: TopologyDiff,
@@ -733,21 +757,22 @@ def dispatch_alerts(
 
     findings = diff.findings or []
     critical_findings = [
-        f for f in findings if getattr(f, "severity", None) == "critical"
+        f for f in findings if _finding_severity(f) == "critical"
     ]
     warning_findings = [
-        f for f in findings if getattr(f, "severity", None) == "warning"
+        f for f in findings if _finding_severity(f) == "warning"
     ]
+    has_anomalies = bool(critical_findings or warning_findings)
 
-    # Only send alert if there are findings, state diffs, or unverified links
-    if changes or findings or not diff.baseline_updated:
+    # Only send alert if there are actionable anomalies, state diffs, or unverified links
+    if changes or has_anomalies or not diff.baseline_updated:
         level = (
             "critical"
             if (critical_findings or not diff.baseline_updated)
             else "warning"
         )
         title = (
-            "OSPF Topology Anomaly Detected" if findings else "OSPF Topology Changed"
+            "OSPF Topology Anomaly Detected" if has_anomalies else "OSPF Topology Changed"
         )
 
         summary_lines = []
@@ -758,13 +783,13 @@ def dispatch_alerts(
         if critical_findings:
             summary_lines.append(f"Critical findings ({len(critical_findings)}):")
             for f in critical_findings[:3]:
-                summary_lines.append(f" - {getattr(f, 'title', str(f))}")
-        elif warning_findings:
+                summary_lines.append(f" - {_finding_text(f)}")
+        if warning_findings:
             summary_lines.append(f"Warnings ({len(warning_findings)}):")
             for f in warning_findings[:3]:
-                summary_lines.append(f" - {getattr(f, 'title', str(f))}")
+                summary_lines.append(f" - {_finding_text(f)}")
 
-        message = "\n".join(summary_lines)
+        message = "\n".join(summary_lines) or title
         metadata = {
             "target": "OSPF Backbone",
             "hint": "Check OSPF TopoViz explorer HTML for complete details.",

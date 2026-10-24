@@ -164,3 +164,133 @@ def test_dispatch_alerts_in_sync_sends_info_heartbeat() -> None:
     assert call_args.kwargs.get("title") == "OSPF Topology In Sync"
     assert call_args.kwargs.get("level") == "info"
     assert "1 router(s)" in call_args.kwargs.get("message")
+
+
+def test_dispatch_alerts_info_findings_only_routes_to_heartbeat() -> None:
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="warning",
+    )
+
+    diff = TopologyDiff(
+        added_nodes=set(),
+        removed_nodes=set(),
+        added_edges=set(),
+        removed_edges=set(),
+        findings=[
+            {
+                "category": "route",
+                "kind": "STALE ROUTE",
+                "severity": "info",
+                "router": "10.255.255.10",
+                "subject": "10.0.98.32/30",
+                "message": "10.0.98.32/30: stale route in RIB",
+            }
+        ],
+        baseline_updated=True,
+    )
+    graph = {
+        "nodes": [{"id": "1.1.1.1"}],
+        "edges": [{"source": "1.1.1.1", "target": "2.2.2.2"}],
+    }
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=graph,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology In Sync"
+    assert call_args.kwargs.get("level") == "info"
+    assert "0 anomalies" in call_args.kwargs.get("message")
+
+
+def test_dispatch_alerts_dict_warning_finding() -> None:
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="warning",
+    )
+
+    diff = TopologyDiff(
+        added_nodes=set(),
+        removed_nodes=set(),
+        added_edges=set(),
+        removed_edges=set(),
+        findings=[
+            {
+                "category": "neighbor",
+                "kind": "ADJ_LOADING",
+                "severity": "warning",
+                "router": "10.255.255.1",
+                "subject": "10.255.255.2",
+                "message": "Neighbor 10.255.255.2 stuck in Loading state",
+            }
+        ],
+        baseline_updated=True,
+    )
+    graph = {"nodes": [], "edges": []}
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=graph,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology Anomaly Detected"
+    assert call_args.kwargs.get("level") == "warning"
+    assert "Neighbor 10.255.255.2 stuck in Loading state" in call_args.kwargs.get("message")
+
+
+def test_dispatch_alerts_dict_critical_finding() -> None:
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="warning",
+    )
+
+    diff = TopologyDiff(
+        added_nodes=set(),
+        removed_nodes=set(),
+        added_edges=set(),
+        removed_edges=set(),
+        findings=[
+            {
+                "category": "neighbor",
+                "kind": "ADJ_DOWN",
+                "severity": "critical",
+                "router": "10.255.255.1",
+                "subject": "10.255.255.3",
+                "message": "Adjacency down with 10.255.255.3",
+            }
+        ],
+        baseline_updated=True,
+    )
+    graph = {"nodes": [], "edges": []}
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=graph,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology Anomaly Detected"
+    assert call_args.kwargs.get("level") == "critical"
+    assert "Adjacency down with 10.255.255.3" in call_args.kwargs.get("message")
+
