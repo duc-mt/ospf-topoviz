@@ -114,6 +114,40 @@ def test_parallel_edge_equal_metric_is_idempotent():
     assert edges.count(("10.0.0.1", "10.0.0.2")) == 1  # no duplicate
 
 
+def test_parallel_links_with_different_interface_addresses_are_remembered():
+    lsdb = Lsdb(
+        router_lsas=[
+            RouterLsa(
+                router_id="10.0.0.1",
+                area="0.0.0.0",
+                links=[
+                    LinkRecord(kind=KIND_P2P, link_id="10.0.0.2", link_data="10.1.0.1", metric=100),
+                    LinkRecord(kind=KIND_P2P, link_id="10.0.0.2", link_data="10.2.0.1", metric=10),
+                    LinkRecord(kind=KIND_P2P, link_id="10.0.0.2", link_data="10.2.0.1", metric=10),  # same link twice
+                    LinkRecord(kind=KIND_P2P, link_id="10.0.0.2", link_data="10.3.0.1", metric=30),
+                ],
+            ),
+        ]
+    )
+    edge = next(e for e in _parser()._build(lsdb)["edges"] if (e["source"], e["target"]) == ("10.0.0.1", "10.0.0.2"))
+    assert edge["metric"] == 10 and edge["interface_address"] == "10.2.0.1"
+    assert sorted(p["interface_address"] for p in edge["parallel_links"]) == ["10.1.0.1", "10.3.0.1"]
+
+
+def test_a_single_link_seen_twice_is_not_a_parallel_link():
+    lsdb = Lsdb(
+        router_lsas=[
+            RouterLsa(
+                router_id="10.0.0.1",
+                area="0.0.0.0",
+                links=[LinkRecord(kind=KIND_P2P, link_id="10.0.0.2", metric=10)] * 2,
+            ),
+        ]
+    )
+    edge = next(e for e in _parser()._build(lsdb)["edges"] if (e["source"], e["target"]) == ("10.0.0.1", "10.0.0.2"))
+    assert "parallel_links" not in edge
+
+
 # ---------------------------------------------------------- None metric guard
 def test_none_metric_link_is_skipped_not_raised():
     """A None metric must be silently dropped — _add_edge must not raise TypeError."""

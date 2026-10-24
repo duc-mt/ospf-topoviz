@@ -99,6 +99,24 @@ def test_p2p_links_have_a_end_per_direction():
     assert {e["iface"] for e in link["ends"]} == {"tun0"}
 
 
+def test_parallel_links_are_drawn_as_one_with_a_count_and_a_breakdown():
+    g = realistic()
+    g.edges[f"{P}1", f"{P}4"]["parallel_links"] = [{"metric": 50, "interface_address": "10.9.9.1"}]
+    link = by_id(build_scene(g, TopologyDiff())["links"])[f"{P}1|{P}4"]
+    assert link["parallel"] == 2 and [m["metric"] for m in link["members"]] == [1, 50]
+    assert link["members"][1]["ip"] == "10.9.9.1"
+    plain = by_id(scene()["links"])[f"{P}1|{P}4"]
+    assert plain["parallel"] == 1 and plain["members"] == []
+
+
+def test_routers_carry_a_role_and_the_scene_names_the_backbone_and_platform():
+    s = scene()
+    nodes = by_id(s["nodes"])
+    assert nodes[f"{P}1"]["role"] in {"ABR", "ASBR", "ABR/ASBR", "Router"}
+    assert all(n["role"] == "" for n in s["nodes"] if n["kind"] != "router")
+    assert A0 in s["meta"]["backbone"] and "device_type" in s["meta"]
+
+
 def test_adjacency_state_reaches_the_link():
     link = by_id(scene()["links"])[f"{P}10|net-10.130.240.1"]
     assert link["state"] == "Full" and link["ends"][0]["state"] == "Full"

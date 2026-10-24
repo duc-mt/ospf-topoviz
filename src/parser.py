@@ -646,6 +646,28 @@ class OSPFParser(BaseParser):
         node.update({k: v for k, v in attrs.items() if v is not None})
 
     @staticmethod
+    def _note_parallel(kept: dict, other: dict) -> None:
+        """Remember ``other`` as one more link in parallel with ``kept`` (the one that is drawn).
+
+        Only a link with a *different* interface address counts: the same link seen twice (an LSA
+        read twice, or the same neighbour in two areas) must not inflate the count, and a link
+        with no address cannot be told apart from the one kept. The extra links are listed under
+        ``parallel_links`` so a drawing can show ``[2x]`` and break it down.
+        """
+        seen = {kept.get("interface_address")}
+        seen.update(item.get("interface_address") for item in kept.get("parallel_links") or ())
+        seen.discard(None)
+        entry = {"metric": other["metric"]}
+        if other.get("interface_address"):
+            entry["interface_address"] = other["interface_address"]
+        for item in [entry, *(other.pop("parallel_links", None) or ())]:
+            address = item.get("interface_address")
+            if not address or not kept.get("interface_address") or address in seen:
+                continue
+            seen.add(address)
+            kept.setdefault("parallel_links", []).append(item)
+
+    @staticmethod
     def _add_edge(
         edges: dict[tuple[str, str], dict],
         source: str,
@@ -656,6 +678,9 @@ class OSPFParser(BaseParser):
         interface_address: str | None = None,
     ) -> None:
         """Add a directed edge; parallel links between the same pair keep the lowest metric.
+
+        The others are remembered under ``parallel_links`` (see ``_note_parallel``) so a drawing can
+        still tell that the pair is joined by more than one link.
 
         ``interface_address`` is the source router's own interface address on the link
         (omitted for network -> router attachments, which have none).
@@ -678,6 +703,8 @@ class OSPFParser(BaseParser):
         if existing is None:
             edges[(source, target)] = record
         elif metric < existing["metric"]:
+            if link_type != "attachment":
+                OSPFParser._note_parallel(record, existing)
             logger.debug(
                 "Parallel link %s -> %s: replacing metric %s (area %s) with lower metric %s (area %s)",
                 source,
@@ -696,3 +723,5 @@ class OSPFParser(BaseParser):
                 existing["metric"],
                 metric,
             )
+            if link_type != "attachment":
+                OSPFParser._note_parallel(existing, record)

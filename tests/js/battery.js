@@ -51,7 +51,7 @@ const storageOf = w => { const s = {}; for (let i = 0; i < w.localStorage.length
   ev(w, 'mousedown', n8, { button: 0, clientX: 100, clientY: 100 }); ev(w, 'mouseup', n8, { button: 0, clientX: 100, clientY: 100 });
   const opacity = id => d.querySelector('g[data-node="' + id + '"]').getAttribute('opacity');
   out.selVisible = d.getElementById('sel').className !== 'hidden'; out.selText = d.getElementById('sel').textContent;
-  out.farDimmed = opacity('10.255.255.15') === '0.18'; out.selfLit = opacity('10.255.255.8') === '1';
+  out.farDimmed = opacity('10.255.255.15') === '0.15'; out.selfLit = opacity('10.255.255.8') === '1';
   d.getElementById('sel-clear').click();
   out.selectionCleared = d.getElementById('sel').className === 'hidden' && opacity('10.255.255.15') === '1';
 

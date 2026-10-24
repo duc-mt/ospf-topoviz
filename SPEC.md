@@ -1,46 +1,51 @@
-# Specification: Alignment of Telegram Alerting & Scheduling with LLDP TopoViz
+# Specification: Apply OSPF Explorer & Parallel Links Patch
 
 ## 1. Problem Statement & Motivation
-In `ospf-topoviz`, Telegram notifications are currently dispatched only when state diffs or anomaly findings are detected during a crawl. Furthermore, the repository lacks:
-1. An ad-hoc `--test-telegram` CLI option to verify bot tokens, network connectivity, and chat IDs without waiting for cron or running a network crawl.
-2. Top-level crash alerting: if `TrackerError` or unhandled exceptions occur during execution, the poller logs to stderr but cannot notify operators on Telegram.
-3. Informational heartbeat reporting on clean runs when `min_severity="info"`.
-4. Concurrency-safe cron runner script (`scripts/run_ospf_cron.sh` with `flock`) and systemd unit files (`systemd/ospf-topoviz.service` & `timer`).
-5. Complete operations documentation (`docs/TELEGRAM_ALERTING.md`).
+A patch file `~/ospf-topoviz.patch` contains significant feature enhancements for `ospf-topoviz`, including:
+1. Parallel link discovery and tracking with interface address differentiation (`_note_parallel`).
+2. Router role determination (`ABR`, `ASBR`, `ABR/ASBR`, `Router`) and metadata propagation in explorer scene building.
+3. Major interactive Web Explorer upgrades:
+   - What-if failure simulation with blast radius calculation.
+   - 1-hop and 2-hop focus mode with neighbourhood dimming.
+   - Interactive minimap radar.
+   - Stub network grouping.
+   - Multi-vendor CLI diagnostic generation (Cisco IOS/NX-OS, Arista EOS, Junos, VyOS, Huawei).
+   - Documentation bundle export (vector SVG and `TOPOLOGY_SPEC.md`).
+4. Automated unit tests covering parallel link tracking, router roles, and explorer JavaScript logic.
 
-Aligning `ospf-topoviz` with `lldp-topoviz` ensures operational consistency, predictable scheduling, and instant manual verifiability across both network visualization tools.
+Applying this patch cleanly will integrate these improvements into the codebase while maintaining code quality and test compliance.
 
 ## 2. Requirements & Scope
 - **In Scope**:
-  - Add `--test-telegram` argument to `main.py` CLI parser to dispatch a test alert using current `.env` and `settings.yaml` parameters and exit.
-  - Implement top-level error/crash alerting in `main()` so that any `TrackerError` or unexpected Python crash triggers a `critical` severity Telegram alert.
-  - Add clean run heartbeat support in `dispatch_alerts()`: when no changes/findings exist and baseline is intact, dispatch an `info`-level alert (sent when `min_severity="info"`).
-  - Create `scripts/run_ospf_cron.sh` with `flock` non-blocking file locking (`/tmp/ospf_topoviz.lock`), automated `.env` sourcing, and proper exit code forwarding.
-  - Create `systemd/ospf-topoviz.service` and `systemd/ospf-topoviz.timer` (15-minute cadence, hardened unit configuration).
-  - Add comprehensive operations guide in `docs/TELEGRAM_ALERTING.md`.
-  - Add unit tests for `--test-telegram` and crash notifications.
+  - Cleanly apply `~/ospf-topoviz.patch` to the working directory (`git apply --check` verified).
+  - Modify 9 targeted files:
+    - `README.md`
+    - `src/explorer.py`
+    - `src/parser.py`
+    - `src/web/explorer.html`
+    - `tests/js/battery.js`
+    - `tests/js/test_explorer_docs.js`
+    - `tests/js/test_simulation.js`
+    - `tests/test_explorer.py`
+    - `tests/test_parser.py`
+  - Ensure all python unit tests pass without regressions using `./.venv/bin/pytest`.
+  - Ensure code formatting and linting pass using `./.venv/bin/ruff check .`.
 
 - **Out of Scope (Non-Goals)**:
-  - Modifying LSDB parsing, Dijkstra graph computation, or vendor poller modules.
-  - Adding bidirectional Telegram bot command handlers (polling/webhooks).
+  - Applying unneeded patches from other repositories (`lldp-topoviz.patch`, `netconfig-*.diff`).
+  - Installing Node.js system packages (JS tests run when Node is available, skipped otherwise).
 
 ## 3. Technical Design & Contracts
-- **CLI Interface**:
-  - `python main.py --test-telegram` or `./run --test-telegram`:
-    - Reads `alerting.telegram` from settings and overlays `TELEGRAM_*` environment variables.
-    - Validates bot token and chat ID.
-    - Sends a test alert at `warning` severity with operational metadata.
-    - Returns `EXIT_OK` (0) on success, `EXIT_ERROR` (1) on failure.
-- **Top-Level Alerting Wrapper**:
-  - In `main()`:
-    - Instantiate `TelegramNotifier` before executing `run(args)`.
-    - If `TrackerError` is raised: send `critical` alert titled `"OSPF Pipeline Aborted"`.
-    - If unexpected `Exception` is raised: send `critical` alert titled `"OSPF Pipeline Crash"`.
-- **Concurrency Locking**:
-  - `flock -n 200` on `/tmp/ospf_topoviz.lock` within `scripts/run_ospf_cron.sh`.
+- **Parallel Link Ingestion**:
+  - `OSPFParser._note_parallel(kept, other)` records secondary edges with distinct interface addresses into `parallel_links`.
+  - `build_scene()` computes `members` and `parallel` count for visual representation with `[2x]` badge.
+- **Scene Schema Extension**:
+  - Router nodes carry `"role"` (`ABR`, `ASBR`, `ABR/ASBR`, `Router`).
+  - Scene links carry `"parallel"` (integer count) and `"members"` (list of metric/IP dictionaries).
+  - Scene metadata carries `"backbone"` area IDs and `"device_type"`.
 
 ## 4. Verification & Acceptance Criteria
-- [ ] Criterion 1: `./run --test-telegram` successfully sends a test notification to Telegram and exits `0`.
-- [ ] Criterion 2: `./scripts/run_ospf_cron.sh` successfully sources `.env`, respects `flock`, and executes `main.py`.
-- [ ] Criterion 3: Unit tests verify `--test-telegram`, disabled state, and crash alerts.
-- [ ] Criterion 4: All linters (`ruff check`, `ruff format --check`) and automated pytest tests pass without regression.
+- [x] Criterion 1: Patch `/home/nms-net/ospf-topoviz.patch` applies cleanly with zero reject files.
+- [x] Criterion 2: Working directory reflects all changes across the 9 files.
+- [x] Criterion 3: `./.venv/bin/pytest` passes 100% of runnable tests (558 passed, 39 skipped).
+- [x] Criterion 4: `./.venv/bin/ruff check .` passes without errors.

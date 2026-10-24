@@ -35,7 +35,7 @@ const scene = fixture.scene;
 // ---------------------------------------------------------------- the engine block, on its own
 const body = page.split('SIM-ENGINE:BEGIN')[1].split('/* SIM-ENGINE:END')[0];
 const E = new Function(body.slice(body.indexOf('\n')) + `
-  return { SIM_MAX_METRIC, makeGraphModel, computeShortestPaths, dijkstra, simAnalyze, simDrainImpact, simSetModel, simCountPaths, simPaths };`)();
+  return { SIM_MAX_METRIC, makeGraphModel, computeShortestPaths, dijkstra, simAnalyze, simDrainImpact, simSetModel, simCountPaths, simPaths, simBlast, simBlastAnchors, simCutDependents };`)();
 
 const R = (n) => '10.0.0.' + n;
 const NET = 'net-192.168.1.1';
@@ -164,6 +164,54 @@ test('drain impact: what hangs only off the drained router, and what does not', 
   assert.deepStrictEqual(four.stranded.slice().sort(), [R(5), R(6), R(7)].sort()); assert.strictEqual(four.strandedPrefixes, 2);
   const two = E.simDrainImpact(M, R(2), R(1), state());
   assert.deepStrictEqual(two.stranded, []); assert.deepStrictEqual(two.stillTransit, []);
+});
+
+console.log('blast radius (red = cut off, amber = loses redundancy, blue = rerouted), measured from the core');
+const blast = (core, over) => E.simBlast(M, state(over), core.map(R));
+const ids = (list) => list.slice().sort();
+test('the core is Source A when picked, else the ABRs (R3 here)', () => {
+  assert.deepStrictEqual(E.simBlastAnchors(M, state()).ids, [R(3)]);
+  assert.deepStrictEqual(E.simBlastAnchors(M, state({ sourceNode: R(1) })).ids, [R(1)]);
+});
+test('no change, no blast radius', () => {
+  const b = blast([1]);
+  assert.strictEqual(b.active, false); assert.deepStrictEqual([b.isolated, b.spof, b.rerouted, b.newLinks], [[], [], [], []]);
+});
+test('a router that is down cuts off whatever hangs only off it (RED)', () => {
+  const b = blast([1], { disabledNodes: new Set([R(4)]) });
+  assert.deepStrictEqual(ids(b.isolated), ids([R(5), R(6), R(7)]));
+  assert.ok(b.isolated.every((id) => b.state[id] === 'isolated'));
+  assert.ok(!b.isolated.includes(R(4)), 'the router that was taken down is not part of its own blast radius');
+});
+test('cutting the only link to a stub isolates just that stub', () => {
+  assert.deepStrictEqual(blast([1], { disabledLinks: new Set([linkId(4, 7)]) }).isolated, [R(7)]);
+});
+test('losing the primary path reroutes at a higher cost and leaves the router single-homed (AMBER wins over BLUE)', () => {
+  const b = blast([1], { disabledNodes: new Set([R(2)]) });
+  assert.deepStrictEqual(b.isolated, []);
+  assert.strictEqual(b.state[R(4)], 'spof'); assert.strictEqual(b.delta[R(4)], 20);       // 20 -> 40, and only R3 is left
+  assert.deepStrictEqual(b.newLinks, [linkId(3, 4)]);                                      // the only link that carries traffic it did not carry before
+  assert.ok(b.lostLinks.includes(linkId(1, 2)) && b.lostLinks.includes(linkId(2, 4)), 'the old way is listed');
+});
+test('losing one of two equal paths keeps the cost but loses redundancy', () => {
+  const b = blast([1], { disabledLinks: new Set([linkId(1, 8)]) });
+  assert.strictEqual(b.state[R(10)], 'spof'); assert.strictEqual(b.delta[R(10)], undefined);   // R10 still costs 10 via R9
+  assert.strictEqual(b.state[R(8)], 'spof'); assert.strictEqual(b.delta[R(8)], 10);            // R8 now goes round via R10: 5 -> 15
+});
+test('draining a router with an alternative reroutes; the drained router keeps its links (BLUE)', () => {
+  const b = blast([1], { drainedNodes: new Set([R(2)]) });
+  assert.deepStrictEqual(b.isolated.concat(b.stranded), []);
+  assert.strictEqual(b.state[R(4)], 'rerouted'); assert.strictEqual(b.delta[R(4)], 20);
+});
+test('draining a router that others hang off strands them: reachable only at max-metric (RED)', () => {
+  const b = blast([1], { drainedNodes: new Set([R(4)]) });
+  assert.deepStrictEqual(ids(b.stranded), ids([R(5), R(6), R(7)]));
+  assert.ok(b.stranded.every((id) => b.state[id] === 'stranded'));
+});
+test('cut-vertex detection: R4 is the only way to R7, R5 and R6; R4 itself has two ways in', () => {
+  const dep = E.simCutDependents(M, state(), [R(1)]);
+  [7, 5, 6].forEach((n) => assert.ok(dep[R(n)], 'R' + n));
+  assert.ok(!dep[R(4)] && !dep[R(2)] && !dep[R(10)], 'multi-homed routers are not flagged');
 });
 
 console.log('parity with the Python SPF (correlation.spf) on the exported scene');

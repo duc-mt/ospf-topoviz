@@ -64,6 +64,29 @@ def _title_and_sub(
     return title, sub
 
 
+def _role(kind: str, attrs: dict[str, Any]) -> str:
+    """The badge under a router's name: ``ABR``, ``ASBR``, ``ABR/ASBR`` or plain ``Router``."""
+    if kind != "router":
+        return ""
+    flags = [r for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr"))) if on]
+    return "/".join(flags) or "Router"
+
+
+def _parallel_members(*sides: Any) -> list[dict[str, Any]]:
+    """Every physical link behind one drawn link: the kept one first, then its parallel twins."""
+    for side in sides:
+        if side is None or side.attrs.get("link_type") == "attachment":
+            continue
+        members = [{"metric": side.attrs.get("metric"), "ip": side.attrs.get("interface_address")}]
+        members += [
+            {"metric": p.get("metric"), "ip": p.get("interface_address")}
+            for p in side.attrs.get("parallel_links") or ()
+        ]
+        if len(members) > 1:
+            return members
+    return []
+
+
 def _node_size(kind: str, title: str, sub: list[str]) -> tuple[float, float]:
     """Room for the text (the layout spaces nodes by these sizes). A diamond is narrow where its text
     sits, so a network needs to be much wider than its title."""
@@ -208,6 +231,7 @@ def build_scene(
             "areas": areas,
             "abr": bool(attrs.get("abr")),
             "asbr": bool(attrs.get("asbr")),
+            "role": _role(kind, attrs),
             "status": status,
             "stale": bool(attrs.get("stale")),
             "age": attrs.get("lsa_age"),
@@ -233,12 +257,15 @@ def build_scene(
             for e in (_end(link.ab, link.a, link.b), _end(link.ba, link.b, link.a))
             if e
         ]
+        members = _parallel_members(link.ab, link.ba)
         scene_links.append(
             {
                 "id": f"{link.a}|{link.b}",
                 "a": link.a,
                 "b": link.b,
                 "kind": "segment" if segment else "p2p",
+                "parallel": len(members) or 1,
+                "members": members,
                 "status": status,
                 "oneWay": one_way,
                 "unverified": unverified,
@@ -354,6 +381,8 @@ def build_scene(
             "links": len(scene_links),
             "sources": meta_graph.get("sources") or [],
             "areas": sorted({a for n in scene_nodes.values() for a in n["areas"]}),
+            "backbone": [b.id for b in layout.areas if b.backbone],
+            "device_type": str(meta_graph.get("device_type") or ""),
         },
         "nodes": list(scene_nodes.values()),
         "links": scene_links,

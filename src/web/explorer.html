@@ -15,14 +15,14 @@
 })();
 </script>
 <style>
-:root{--font:Inter,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+:root{--font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace}
 /* Colour tokens. The page sets data-theme="dark" or "light" on <html> (see the script in <head>). */
 [data-theme="dark"]{color-scheme:dark;--bg:#0b1324;--panel:#111b2f;--panel2:#16233b;--line:#22324d;--text:#e6edf7;--strong:#ffffff;--muted:#8da2c0;
 --accent:#3b82f6;--crit:#ef4444;--warn:#f59e0b;--warn-ink:#1a1200;--info:#60a5fa;--ok:#22c55e;--dot:#1a2a45;--glass:#0b1324cc;--tip:#0b1324f2;--on:#1e3a66;--hover:#1b2c49;
---shadow:#0009;--c-crit:#fca5a5;--c-warn:#fcd34d;--c-orange:#fdba74;--c-info:#93c5fd;--t-ok:#4ade80;--t-y:#facc15;--t-o:#fb923c;--t-r:#f87171;--logo:#60a5fa;--sim-bg:#2a2108f2;--sim-path:#38bdf8;--sim-rev:#e879f9}
+--shadow:#0009;--c-crit:#fca5a5;--c-warn:#fcd34d;--c-orange:#fdba74;--c-info:#93c5fd;--t-ok:#4ade80;--t-y:#facc15;--t-o:#fb923c;--t-r:#f87171;--logo:#60a5fa;--sim-bg:#2a2108f2;--sim-path:#38bdf8;--sim-rev:#e879f9;--glass-bg:rgba(17,27,47,.85);--glass-line:rgba(255,255,255,.08);--glass-shadow:0 16px 40px -8px rgba(0,0,0,.45);--blue:#3b82f6}
 [data-theme="light"]{color-scheme:light;--bg:#f8fafc;--panel:#ffffff;--panel2:#f1f5f9;--line:#e2e8f0;--text:#0f172a;--strong:#020617;--muted:#64748b;
 --accent:#2563eb;--crit:#dc2626;--warn:#d97706;--warn-ink:#1a1200;--info:#2563eb;--ok:#16a34a;--dot:#cbd5e1;--glass:#f8fafccc;--tip:#fffffff2;--on:#dbeafe;--hover:#e8eef8;
---shadow:#0f172a26;--c-crit:#b91c1c;--c-warn:#b45309;--c-orange:#c2410c;--c-info:#1d4ed8;--t-ok:#15803d;--t-y:#a16207;--t-o:#c2410c;--t-r:#b91c1c;--logo:#2563eb;--sim-bg:#fff7e0f2;--sim-path:#0284c7;--sim-rev:#c026d3}
+--shadow:#0f172a26;--c-crit:#b91c1c;--c-warn:#b45309;--c-orange:#c2410c;--c-info:#1d4ed8;--t-ok:#15803d;--t-y:#a16207;--t-o:#c2410c;--t-r:#b91c1c;--logo:#2563eb;--sim-bg:#fff7e0f2;--sim-path:#0284c7;--sim-rev:#c026d3;--glass-bg:rgba(255,255,255,.90);--glass-line:rgba(15,23,42,.10);--glass-shadow:0 12px 32px -10px rgba(15,23,42,.28);--blue:#2563eb}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.45 var(--font);overflow:hidden}
 button,input,select{font:inherit;color:inherit}
@@ -93,6 +93,7 @@ details.group .n{margin-left:auto;color:var(--muted)}
 .sim-chip.ok{color:var(--t-ok);border-color:var(--ok)}
 .sim-chip.rev{color:var(--sim-rev);border-color:var(--sim-rev);font-weight:700}
 .sim-chip.dim{color:var(--muted)}
+.sim-chip.blue{color:var(--info);border-color:var(--blue);font-weight:700}
 .sim-chip.undo{cursor:pointer}.sim-chip.undo:hover{border-color:var(--crit)}
 #sim-diff{flex-basis:100%;display:none;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;color:var(--muted)}
 #sim-diff b{color:var(--strong)}#sim-diff .cut{color:var(--c-crit)}#sim-diff .new{color:var(--sim-path)}
@@ -114,6 +115,80 @@ details.group .n{margin-left:auto;color:var(--muted)}
 @keyframes simflow{to{stroke-dashoffset:-19}}
 @media (prefers-reduced-motion:reduce){.sim-path-active,.sim-path-rev{animation:none}}
 @media print{#side,#top,#bar,#sim-bar,#sim-pop{display:none}#app{height:100%}}
+/* ---- unified design system: tabular numerals, glass surfaces, status pills, inspector, minimap ---- */
+html,body{font-variant-numeric:tabular-nums}
+.mono,.num,.ip{font-family:var(--mono);font-variant-numeric:tabular-nums}
+#canvas text{font-variant-numeric:tabular-nums}
+#summary,#q,.panel,#tip,#sim-pop,#toast,#sel,#minimap,#diff-bar,#hotkeys,#search-results{background:var(--glass-bg);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);border-radius:10px}
+#sim-bar{backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);box-shadow:var(--glass-shadow)}
+#toast{border-radius:99px;bottom:104px}
+.panel{left:14px;right:auto}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:1px 9px;border-radius:99px;border:1px solid;font-size:11px;font-weight:700;letter-spacing:.03em;white-space:nowrap;line-height:1.5}
+.pill.up{background:rgba(34,197,94,.12);border-color:var(--ok);color:var(--t-ok)}
+.pill.warn{background:rgba(245,158,11,.12);border-color:var(--warn);color:var(--c-warn)}
+.pill.down{background:rgba(239,68,68,.15);border-color:var(--crit);color:var(--t-r)}
+.pill.info{background:rgba(59,130,246,.14);border-color:var(--accent);color:var(--c-info)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 8px}
+.metric{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 8px}
+.metric b{display:block;font-size:17px;color:var(--strong)}
+.metric span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.mrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.empty{color:var(--muted);background:var(--panel2);border:1px dashed var(--line);border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:12px}
+.empty.hidden{display:none}
+.empty kbd{font-family:var(--mono);color:var(--text);font-weight:700}
+details.group>summary .pill{margin-left:6px}
+/* tabbed inspector (slides in from the right) */
+#sel{position:absolute;z-index:5;right:14px;top:60px;width:350px;max-height:calc(100% - 210px);overflow:auto;padding:0;font-size:12px;margin:0;transition:transform .25s ease,opacity .25s ease}
+#sel.hidden{display:block;opacity:0;visibility:hidden;pointer-events:none;transform:translateX(calc(100% + 24px))}
+#sel .ih{display:flex;gap:8px;align-items:flex-start;padding:10px 12px 6px}
+#sel .ih b{font-size:14px;color:var(--strong);flex:1;word-break:break-word}
+#sel .ih .x{padding:1px 8px;font-size:12px}
+#sel .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 8px}
+#sel .tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:6px 8px;font-size:12px;color:var(--muted)}
+#sel .tabs button.on{color:var(--strong);border-bottom-color:var(--accent);font-weight:700}
+#sel .tabbody{padding:10px 12px 12px}
+#sel .kv{display:grid;grid-template-columns:92px 1fr;gap:4px 10px;margin:0}
+#sel .kv dt{color:var(--muted)}#sel .kv dd{margin:0;word-break:break-word}
+#sel h6{margin:12px 0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+#sel .peer{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:6px 0;border-top:1px solid var(--line)}
+#sel .peer .sub2{grid-column:1/-1;color:var(--muted)}
+#sel .peer button.go{border:0;background:none;padding:0;text-align:left;color:var(--c-info);font-weight:700;cursor:pointer}
+#sel input.flt,#sel select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 8px;margin:0 0 6px}
+#sel .cli{margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+#sel .cli header{display:flex;align-items:center;gap:8px;padding:5px 8px;color:var(--muted)}
+#sel .cli header span{flex:1}
+#sel .cli header button{padding:1px 8px;font-size:11px}
+#sel .cli pre{margin:0;padding:6px 9px 8px;font:11.5px/1.55 var(--mono);white-space:pre-wrap;word-break:break-all;color:var(--text)}
+#sel .note{color:var(--muted);margin:6px 0}
+/* minimap radar, hotkey legend, snapshot bar, search results */
+#minimap{position:absolute;z-index:4;right:14px;bottom:44px;width:160px;height:100px;padding:0;cursor:crosshair;touch-action:none}
+#hotkeys{position:absolute;z-index:4;right:14px;bottom:12px;padding:5px 10px;font:11px/1.3 var(--mono);color:var(--muted);white-space:nowrap}
+#hotkeys .hk{color:var(--text);font-weight:700}
+#diff-bar{position:absolute;z-index:4;left:14px;bottom:50px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 10px;max-width:calc(100% - 210px)}
+#diff-bar .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+#diff-bar .seg button{border:0;border-radius:0;background:transparent;padding:4px 11px;font-size:12px}
+#diff-bar .seg button.on{background:var(--on);color:var(--strong);font-weight:700}
+#diff-bar .seg button[disabled]{opacity:.4;cursor:not-allowed}
+#diff-sum{color:var(--muted);font-size:12px}
+#diff-bar .key i{display:inline-block;width:14px;height:0;border-top:3px solid;margin:0 4px 2px 8px;vertical-align:middle}
+#diff-bar .key i.k-add{border-top-color:var(--ok)}#diff-bar .key i.k-rm{border-top-color:var(--crit);border-top-style:dashed}#diff-bar .key i.k-ch{border-top-color:var(--warn)}
+#search-results{position:absolute;z-index:9;width:300px;max-height:320px;overflow:auto;padding:4px}
+#search-results.hidden{display:none}
+#search-results button{display:flex;gap:8px;width:100%;text-align:left;border:0;background:transparent;border-radius:7px;padding:5px 8px}
+#search-results button:hover,#search-results button.cur{background:var(--hover)}
+#search-results small{color:var(--muted);margin-left:auto}
+/* level of detail, smooth focus, blast radius animation */
+#canvas.lod-low .sub,#canvas.lod-low .rolepill{display:none}
+#canvas.lod-low .link.nonbb .vis{stroke-opacity:.3}
+#canvas .node,#canvas .link{transition:opacity .22s ease}
+#vp.smooth{transition:transform .38s ease}
+#diffovl{pointer-events:none}
+.sim-pulse{transform-box:fill-box;transform-origin:center;animation:simpulse 1.7s ease-out infinite}
+.sim-pulse.b{animation-delay:.85s}
+@keyframes simpulse{0%{transform:scale(.55);opacity:.9}100%{transform:scale(1.8);opacity:0}}
+.sim-blue{animation:simflow .9s linear infinite}
+@media (prefers-reduced-motion:reduce){.sim-pulse,.sim-blue{animation:none}#vp.smooth,#canvas .node,#canvas .link,#sel{transition:none}}
+@media print{#minimap,#hotkeys,#diff-bar,#sel,#search-results{display:none}}
 </style>
 </head>
 <body>
@@ -130,7 +205,9 @@ details.group .n{margin-left:auto;color:var(--muted)}
 </header>
 <div id="app">
   <aside id="side">
-    <div id="sel" class="hidden"></div>
+    <div id="metrics" class="metrics"></div>
+    <div id="mpills" class="mrow"></div>
+    <div id="insp-empty" class="empty">Click any device or cable to inspect port status, metrics, and neighbor adjacencies, or press <kbd>/</kbd> to search.</div>
     <div id="simside"></div>
     <h2>Diagnostics &amp; Warnings</h2>
     <div id="diag"></div>
@@ -160,9 +237,22 @@ details.group .n{margin-left:auto;color:var(--muted)}
       <div id="sim-changes"></div>
     </div>
     <div id="sim-pop"></div>
-    <svg id="canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0"><g id="vp"><g id="areas"></g><g id="links"></g><g id="simfx"></g><g id="labels"></g><g id="nodes"></g><g id="simtop"></g></g></svg>
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0"><g id="vp"><g id="areas"></g><g id="links"></g><g id="simfx"></g><g id="labels"></g><g id="nodes"></g><g id="diffovl"></g><g id="simtop"></g></g></svg>
     <div id="tip"></div>
     <div id="toast"></div>
+    <div id="search-results" class="hidden" role="listbox" aria-label="Search results"></div>
+    <div id="sel" class="hidden" role="complementary" aria-label="Inspector"></div>
+    <div id="diff-bar" role="group" aria-label="Snapshot time travel">
+      <span class="seg" role="radiogroup" aria-label="Snapshot">
+        <button id="t-current" data-time="current" role="radio" aria-checked="false" title="The network as it is now: removed items are hidden">Current State</button>
+        <button id="t-previous" data-time="previous" role="radio" aria-checked="false" title="The network as it was at the last run: new items are hidden, changed costs show their old value">Previous State</button>
+        <button id="t-overlay" data-time="overlay" role="radio" aria-checked="true" class="on" title="Both at once: green = added, red dashed = removed, orange = changed">Diff Overlay</button>
+      </span>
+      <span id="diff-sum"></span>
+      <span class="key"><i class="k-add"></i>added<i class="k-rm"></i>removed<i class="k-ch"></i>changed</span>
+    </div>
+    <canvas id="minimap" width="160" height="100" aria-label="Minimap radar" title="Minimap: click or drag to move the view"></canvas>
+    <div id="hotkeys"><span class="hk">[ / ]</span> Search &nbsp;&middot;&nbsp; <span class="hk">[ F ]</span> Fit &nbsp;&middot;&nbsp; <span class="hk">[ S ]</span> Simulate &nbsp;&middot;&nbsp; <span class="hk">[ Esc ]</span> Deselect</div>
     <div class="panel hidden" id="p-filter">
       <h4>Show</h4>
       <label><input type="checkbox" id="f-oneway" checked> One-way links</label>
@@ -171,6 +261,9 @@ details.group .n{margin-left:auto;color:var(--muted)}
       <label><input type="checkbox" id="f-areas" checked> Area boxes</label>
       <h4>Bundle</h4>
       <label><input type="checkbox" id="f-bundle"> Bundle leaf routers of a segment, from <input type="number" id="f-bundlemin" min="2" max="99" value="6"></label>
+      <h4>Declutter</h4>
+      <label><input type="checkbox" id="f-group-stubs"> Group single-homed stub networks (<span class="num">+N Stubs</span>)</label>
+      <label><input type="checkbox" id="f-ego" checked> Focus mode: dim all but the 2-hop neighbourhood</label>
       <h4>Areas</h4>
       <div id="f-arealist"></div>
     </div>
@@ -182,6 +275,10 @@ details.group .n{margin-left:auto;color:var(--muted)}
       <p class="mono" style="color:var(--muted);font-size:11px">Dragged positions are remembered in this browser, per node ID.</p>
       <h4>Picture</h4>
       <button id="m-svg">Download SVG</button>
+      <h4>Documentation</h4>
+      <button id="m-docs" title="Downloads a clean vector SVG and TOPOLOGY_SPEC.md">Export Documentation Bundle</button>
+      <p class="mono" style="color:var(--muted);font-size:11px">Clean SVG (light, no UI, scales to any resolution) + <b>TOPOLOGY_SPEC.md</b> with the device table and the link matrix.</p>
+      <button id="m-docsvg">Clean SVG only</button> <button id="m-docmd">TOPOLOGY_SPEC.md only</button>
     </div>
   </main>
 </div>
@@ -191,6 +288,7 @@ details.group .n{margin-left:auto;color:var(--muted)}
 'use strict';
 var SCENE = JSON.parse(document.getElementById('scene').textContent);
 var NS = 'http://www.w3.org/2000/svg';
+var FONT = 'Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif', MONO = 'ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace';
 var $ = function (id) { return document.getElementById(id); };
 
 // ------------------------------------------------------------------ palette (SVG uses attributes, not CSS variables)
@@ -202,7 +300,7 @@ var PAL = {
     full: '#22c55e', twoway: '#eab308', stuck: '#f97316', down: '#ef4444', path: '#38bdf8', focus: '#f43f5e', area: '#4f7fb0',
     areaFill: '#10203a', areaFillOpacity: 0.35, areaLabel: '#9cc0e6', bundleA: '#1e3a8a', bundleB: '#1e40af',
     pillBg: '#0b1324', pillOpacity: 0.88, pillText: '#e6edf7', pillEdge: '#64748b', exportBg: '#0b1324',
-    simPath: '#38bdf8', simRev: '#e879f9', simBad: '#ef4444', simWarn: '#f59e0b'
+    simPath: '#38bdf8', simRev: '#e879f9', simBad: '#ef4444', simWarn: '#f59e0b', simBlue: '#3b82f6', accent: '#3b82f6'
   },
   light: {
     router: '#1d4ed8', routerEdge: '#1e3a8a', abr: '#d97706', net: '#fbbf24', netEdge: '#b45309', ghost: '#64748b', ghostFill: '#e2e8f0',
@@ -211,7 +309,7 @@ var PAL = {
     full: '#16a34a', twoway: '#a16207', stuck: '#ea580c', down: '#dc2626', path: '#0284c7', focus: '#e11d48', area: '#3b82f6',
     areaFill: '#dbeafe', areaFillOpacity: 0.5, areaLabel: '#1d4ed8', bundleA: '#93c5fd', bundleB: '#60a5fa',
     pillBg: '#ffffff', pillOpacity: 0.95, pillText: '#0f172a', pillEdge: '#94a3b8', exportBg: '#f8fafc',
-    simPath: '#0284c7', simRev: '#c026d3', simBad: '#dc2626', simWarn: '#c2670a'
+    simPath: '#0284c7', simRev: '#c026d3', simBad: '#dc2626', simWarn: '#c2670a', simBlue: '#2563eb', accent: '#2563eb'
   }
 };
 var C = PAL.dark;   // the palette in use; applyTheme() swaps it
@@ -237,6 +335,10 @@ var state = {
   matches: null,         // Set of node ids matching the search
   show: { oneWay: true, costs: true, ifaces: false, areas: true },
   bundle: { on: false, min: 6, expanded: {} },
+  stubs: { on: false, min: 2, expanded: {} },   // single-homed stub networks folded into "+N Stubs"
+  time: 'overlay',                              // snapshot shown: 'current' | 'previous' | 'overlay' (diff)
+  ego: true,                                    // focus mode: dim all but the 2-hop neighbourhood
+  vendor: null,                                 // CLI runbook platform chosen by hand
   hiddenAreas: {},
   sev: { critical: true, warning: true, info: false },   // information is listed on request: it is the noisy kind
   hover: null
@@ -299,7 +401,7 @@ function makeGraphModel(scene) {
     [['ab', l.a, l.b], ['ba', l.b, l.a]].forEach(function (d) {
       var c = costs[d[0]];
       if (typeof c !== 'number' || !nodes[d[1]] || !nodes[d[2]]) return;
-      var e = { id: edges.length, link: l.id, dir: d[0], from: d[1], to: d[2], cost: c, attach: nodes[d[1]].kind !== 'router' && nodes[d[2]].kind === 'router' };
+      var e = { id: edges.length, link: l.id, par: l.parallel || 1, dir: d[0], from: d[1], to: d[2], cost: c, attach: nodes[d[1]].kind !== 'router' && nodes[d[2]].kind === 'router' };
       edges.push(e); out[d[1]].push(e.id); byLink[l.id].push(e.id);
     });
   });
@@ -457,6 +559,92 @@ function simDrainImpact(model, nodeId, viewFrom, state) {
   });
   return out;
 }
+// ---- blast radius (feature 3): what the simulated changes do to every router, measured from the core
+// The core is Source A when one is picked, else the ABRs, else the best-connected router.
+function simBlastAnchors(model, st) {
+  var src = st && st.sourceNode;
+  if (src && model.nodes[src] && model.nodes[src].kind === 'router') return { ids: [src], why: 'Source A' };
+  var abrs = model.routers.filter(function (id) { return model.nodes[id].abr; });
+  if (abrs.length) return { ids: abrs, why: 'ABRs' };
+  var best = null;
+  model.routers.slice().sort().forEach(function (id) {
+    var n = model.nodes[id], score = model.out[id].length * 1000 + (n.prefix_count || 0);
+    if (best === null || score > best.score) best = { id: id, score: score };
+  });
+  return { ids: best ? [best.id] : [], why: 'best-connected router' };
+}
+
+// Routers that hang off a bridge link or a cut router on their way to the core: one failure and they are gone.
+// The core routers are the reference, so they are never counted as a single point of failure themselves (a single
+// link to the core still is, and so is a single transit network or router in between).
+function simCutDependents(model, mods, anchors) {
+  var ROOT = '\u0000core', adj = {}, seenLink = {}, key = 0, dep = {}, isAnchor = {};
+  anchors.forEach(function (a) { isAnchor[a] = 1; });
+  Object.keys(model.nodes).forEach(function (id) { adj[id] = []; });
+  adj[ROOT] = [];
+  model.edges.forEach(function (e) {                       // one undirected link per adjacency; parallel cables count apart
+    if (seenLink[e.link] || simEdgeCost(e, mods) === null) return;
+    seenLink[e.link] = 1;
+    for (var c = 0; c < (e.par || 1); c++) { var k = ++key; adj[e.from].push({ to: e.to, key: k }); adj[e.to].push({ to: e.from, key: k }); }
+  });
+  anchors.forEach(function (a) {
+    if (mods.disabledNodes.has(a) || !adj[a]) return;
+    var k = ++key; adj[ROOT].push({ to: a, key: k }); adj[a].push({ to: ROOT, key: k });
+  });
+  var disc = {}, low = {}, fin = {}, timer = 0, order = [ROOT], stack = [{ id: ROOT, i: 0, via: 0 }];
+  disc[ROOT] = low[ROOT] = ++timer;
+  while (stack.length) {
+    var f = stack[stack.length - 1], list = adj[f.id];
+    if (f.i < list.length) {
+      var ed = list[f.i++];
+      if (ed.key === f.via) continue;                      // not straight back along the cable we came by (a parallel one is fine)
+      if (disc[ed.to] === undefined) { disc[ed.to] = low[ed.to] = ++timer; order.push(ed.to); stack.push({ id: ed.to, i: 0, via: ed.key }); }
+      else if (disc[ed.to] < low[f.id]) low[f.id] = disc[ed.to];
+    } else {
+      stack.pop(); fin[f.id] = timer;
+      if (!stack.length) continue;
+      var up = stack[stack.length - 1].id;
+      if (low[f.id] < low[up]) low[up] = low[f.id];
+      if (up !== ROOT && (low[f.id] > disc[up] || (low[f.id] >= disc[up] && !isAnchor[up]))) { for (var t = disc[f.id]; t <= fin[f.id]; t++) dep[order[t - 1]] = 1; }
+    }
+  }
+  return dep;
+}
+
+// -> { isolated, stranded, spof, rerouted: [router ids], delta: {id: extra cost}, newLinks, lostLinks: [link ids], state: {id: kind} }
+//   isolated  - lost every path to the core            (red)
+//   stranded  - reachable only through a drained router (red: its traffic cannot drain)
+//   spof      - still connected, but one failure (a link, or a router that is not the core) from isolation, which it was not before (amber)
+//   rerouted  - still connected over a longer path (blue); newLinks are the links that now carry that traffic
+function simBlast(model, st, anchors) {
+  var mods = simMods(st), out = { anchors: anchors, active: simChangeCount(mods) > 0, isolated: [], stranded: [], spof: [], rerouted: [], delta: {}, newLinks: [], lostLinks: [], state: {} };
+  if (!out.active || !anchors.length) return out;
+  function reach(m) {
+    var runs = anchors.map(function (a) { return computeShortestPaths(a, model, m); }), dist = {}, used = {};
+    Object.keys(model.nodes).forEach(function (id) { dist[id] = Infinity; runs.forEach(function (r) { if (r.dist[id] < dist[id]) dist[id] = r.dist[id]; }); });
+    runs.forEach(function (r) {
+      Object.keys(r.preds).forEach(function (id) {
+        if (!isFinite(r.dist[id]) || r.dist[id] !== dist[id]) return;                 // only the paths of the nearest core router
+        r.preds[id].forEach(function (ei) { used[r.model.edges[ei].link] = 1; });
+      });
+    });
+    return { dist: dist, used: used };
+  }
+  var before = reach(null), after = reach(mods);
+  var depBefore = simCutDependents(model, simMods(null), anchors), depAfter = simCutDependents(model, mods, anchors);
+  model.routers.slice().sort().forEach(function (id) {
+    if (mods.disabledNodes.has(id) || anchors.indexOf(id) >= 0) return;
+    var b = before.dist[id], a = after.dist[id];
+    if (!isFinite(b)) return;                                                          // never reachable: not caused by the change
+    if (!isFinite(a)) { out.isolated.push(id); out.state[id] = 'isolated'; return; }
+    if (a >= SIM_MAX_METRIC && b < SIM_MAX_METRIC) { out.stranded.push(id); out.state[id] = 'stranded'; return; }
+    if (depAfter[id] && !depBefore[id]) { out.spof.push(id); out.state[id] = 'spof'; if (a > b) out.delta[id] = a - b; return; }
+    if (a > b) { out.rerouted.push(id); out.delta[id] = a - b; out.state[id] = 'rerouted'; }
+  });
+  Object.keys(after.used).forEach(function (l) { if (!before.used[l]) out.newLinks.push(l); });
+  Object.keys(before.used).forEach(function (l) { if (!after.used[l]) out.lostLinks.push(l); });
+  return out;
+}
 /* SIM-ENGINE:END */
 
 // ------------------------------------------------------------------ svg helpers
@@ -518,29 +706,90 @@ function endpoints(l) {
 }
 
 // ------------------------------------------------------------------ colours and widths
+// ------------------------------------------------------------------ snapshot time travel (current / previous / diff overlay)
+function dstat(x) { return state.time === 'overlay' ? x.status : null; }   // diff colours only show in the overlay
+function dvisible(x) { return !((state.time === 'current' && x.status === 'removed') || (state.time === 'previous' && x.status === 'added')); }
+function endCost(e) {                                                      // one link end's cost as of the chosen snapshot
+  if (e.old != null) return state.time === 'previous' ? e.old : state.time === 'current' ? e.new : e.old + '\u2192' + e.new;
+  return e.metric;
+}
+// ------------------------------------------------------------------ status pills and platform badge
+var PILL_ICON = { up: '\u25cf ', warn: '\u25b2 ', down: '\u2716 ', info: '\u2139 ' };
+function pill(kind, text, title) { return '<span class="pill ' + kind + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + PILL_ICON[kind] + esc(text) + '</span>'; }
+function statePill(s) {
+  if (!s) return '<span class="k">no neighbour data</span>';
+  if (s === 'Full') return pill('up', 'UP', 'Full');
+  return STATE_COLOR[s] ? pill('warn', 'DEGRADED', s) : pill('down', 'DOWN', s);
+}
+function guessVendor(dt) { return cliGuess(dt); }
+function vendorName(v) { var r = CLI_VENDORS.filter(function (x) { return x[0] === v; })[0]; return r ? r[1] : ''; }
+function vendorBadge() { var v = guessVendor(SCENE.meta.device_type); return v ? vendorName(v) : ''; }   // the platform the run was polled as
+
 function linkStyle(l) {
-  var color = C.link, width = l.kind === 'segment' ? 1.9 : 2.3, dash = null, opacity = 1;
+  var ds = dstat(l), color = C.link, width = l.kind === 'segment' ? 1.9 : 2.3, dash = null, opacity = 1;
   var st = stateColor(l.state);
   if (st) { color = st; width = l.state === 'Full' ? 2.6 : 3.6; }
-  if (l.status === 'added') { color = C.added; width = 3.4; }
-  if (l.status === 'changed') { color = C.changed; width = 3.2; }
+  if (ds === 'added') { color = C.added; width = 3.4; }
+  if (ds === 'changed') { color = C.changed; width = 3.2; }
   if (l.state && l.state !== 'Full') { color = stateColor(l.state); width = 3.6; }
-  if (l.status === 'removed') { color = C.removed; dash = '8 6'; width = 2.4; }
+  if (ds === 'removed') { color = C.removed; dash = '8 6'; width = 2.4; }
   if (l.oneWay && l.status !== 'removed') { color = C.oneway; dash = '3 6'; width = 1.6; opacity = .5; }
-  else if (l.unverified && !st && !l.status) { color = C.unverified; dash = '7 5'; }
-  if (l.virtual) { color = C.path; width = 3 + Math.min(5, Math.log2(l.count)); }
+  else if (l.unverified && !st && !ds) { color = C.unverified; dash = '7 5'; }
+  if (l.parallel > 1) width += Math.min(3, l.parallel - 1);
+  if (l.virtual) {
+    if (l.stub) { color = C.link; dash = '4 4'; width = 1.6; }
+    else { color = C.path; width = 3 + Math.min(5, Math.log2(l.count)); }
+  }
   return { color: color, width: width, dash: dash, opacity: opacity };
 }
 function onTrace(l) { return SCENE.trace && SCENE.trace.links.indexOf(l.id) >= 0; }
 
 // ------------------------------------------------------------------ build the picture
-var model = { nodes: [], links: [], bundles: {} };
+var model = { nodes: [], links: [], bundles: {}, stubs: {} };
+function isBackboneLink(l) {
+  var bb = SCENE.meta.backbone || [];
+  if (!bb.length) return true;
+  function inBb(n) { return !!n && (n.areas || []).some(function (a) { return bb.indexOf(a) >= 0; }); }
+  return inBb(l.na) && inBb(l.nb);
+}
+// the devices a bundle / stub badge stands for (null: not a badge)
+function groupOf(id) {
+  if (id.indexOf('bundle:') === 0) return model.bundles[id.slice(7)] || null;
+  if (id.indexOf('stubs:') === 0) return model.stubs[id.slice(6)] || null;
+  return null;
+}
+function isGroupId(id) { return id.indexOf('bundle:') === 0 || id.indexOf('stubs:') === 0; }
+function expandGroup(id) { if (id.indexOf('stubs:') === 0) state.stubs.expanded[id.slice(6)] = true; else state.bundle.expanded[id.slice(7)] = true; }
+
+// Single-homed stub networks of a router (a network with nothing else on it) fold into one "+N Stubs" counter.
+function computeStubs() {
+  var out = {};
+  if (!state.stubs.on) return out;
+  var keep = {};
+  if (state.focus) state.focus.nodes.forEach(function (i) { keep[i] = 1; });
+  if (state.matches) state.matches.forEach(function (i) { keep[i] = 1; });
+  if (state.sel && state.sel.type === 'node') keep[state.sel.id] = 1;
+  if (SCENE.trace) SCENE.trace.paths.forEach(function (p) { p.forEach(function (i) { keep[i] = 1; }); });
+  SCENE.nodes.forEach(function (hub) {
+    if (hub.kind !== 'router' || state.stubs.expanded[hub.id]) return;
+    var members = [];
+    adj[hub.id].forEach(function (lid) {
+      var l = links[lid], other = l.a === hub.id ? l.b : l.a, o = nodes[other];
+      if (!o || o.kind === 'router' || l.status === 'removed' || keep[other] || o.status || o.stale) return;
+      var real = adj[other].filter(function (x) { return links[x].status !== 'removed'; });
+      if (real.length === 1) members.push(other);
+    });
+    if (members.length >= state.stubs.min) out[hub.id] = members.sort();
+  });
+  return out;
+}
 function buildModel() {
-  var bundles = computeBundles(), hidden = {};
-  Object.keys(bundles).forEach(function (h) { bundles[h].forEach(function (m) { hidden[m] = h; }); });
+  var bundles = computeBundles(), stubs = computeStubs(), hidden = {};
+  Object.keys(bundles).forEach(function (h) { bundles[h].forEach(function (m) { hidden[m] = 1; }); });
+  Object.keys(stubs).forEach(function (h) { stubs[h].forEach(function (m) { hidden[m] = 1; }); });
   var vn = [], vl = [];
   SCENE.nodes.forEach(function (n) {
-    if (hidden[n.id]) return;
+    if (hidden[n.id] || !dvisible(n)) return;
     if (n.areas.length && n.areas.every(function (a) { return state.hiddenAreas[a]; })) return;
     vn.push(n);
   });
@@ -553,14 +802,23 @@ function buildModel() {
     var l = { id: 'bundle-link:' + h, a: b.id, b: h, kind: 'segment', virtual: true, count: members.length, ends: [], oneWay: false, state: null, status: null };
     vl.push(l);
   });
+  Object.keys(stubs).forEach(function (h) {
+    if (!vis[h]) return;
+    var members = stubs[h];
+    var b = { id: 'stubs:' + h, kind: 'bundle', stub: true, hub: h, members: members, title: '+' + members.length + ' Stub' + (members.length > 1 ? 's' : ''), sub: [], areas: nodes[h].areas, w: 104, h: 30, x: 0, y: 0 };
+    vn.push(b); vis[b.id] = b;
+    vl.push({ id: 'stubs-link:' + h, a: h, b: b.id, kind: 'segment', virtual: true, stub: true, count: members.length, ends: [], oneWay: false, state: null, status: null });
+  });
   SCENE.links.forEach(function (l) {
     if (!vis[l.a] || !vis[l.b]) return;
     if (l.oneWay && !state.show.oneWay) return;
+    if (!dvisible(l)) return;
     vl.push(l);
   });
   vl.forEach(function (l) { l.na = vis[l.a]; l.nb = vis[l.b]; });
-  model = { nodes: vn, links: vl, bundles: bundles };
+  model = { nodes: vn, links: vl, bundles: bundles, stubs: stubs };
   Object.keys(bundles).forEach(function (h) { placeBundle(h); });
+  Object.keys(stubs).forEach(function (h) { placeStub(h); });
 }
 function placeBundle(h) {
   var members = model.bundles[h], b = null;
@@ -573,6 +831,17 @@ function placeBundle(h) {
   if (Math.abs(cx - hub.x) + Math.abs(cy - hub.y) < 40) pos[b.id] = { x: hub.x, y: hub.y + 200 };
 }
 
+function placeStub(h) {
+  var members = model.stubs[h], b = null;
+  model.nodes.forEach(function (n) { if (n.id === 'stubs:' + h) b = n; });
+  if (!b) return;
+  var hub = pos[h], cx = 0, cy = 0;
+  members.forEach(function (m) { cx += pos[m].x; cy += pos[m].y; });
+  cx /= members.length; cy /= members.length;
+  pos[b.id] = { x: cx, y: cy };
+  if (Math.abs(cx - hub.x) + Math.abs(cy - hub.y) < 40) pos[b.id] = { x: hub.x, y: hub.y + 110 };
+}
+
 function render() {
   buildModel();
   gAreas.textContent = gLinks.textContent = gLabels.textContent = gNodes.textContent = '';
@@ -583,7 +852,7 @@ function render() {
       if (state.hiddenAreas[a.id]) return;
       var g = svg('g', { 'data-area': a.id }, gAreas);
       var r = svg('rect', { x: a.x, y: a.y, width: a.w, height: a.h, rx: 24, fill: C.areaFill, 'fill-opacity': C.areaFillOpacity, stroke: C.area, 'stroke-width': 2, 'stroke-dasharray': '11 8' }, g);
-      var t = svg('text', { x: a.x + 18, y: a.y + 28, fill: C.areaLabel, 'font-size': 17, 'font-weight': 600, 'font-family': 'sans-serif' }, g);
+      var t = svg('text', { x: a.x + 18, y: a.y + 28, fill: C.areaLabel, 'font-size': 17, 'font-weight': 600, 'font-family': FONT }, g);
       t.textContent = 'Area ' + a.id + (a.backbone ? ' (Backbone Area)' : '');
       els.areas[a.id] = r;
     });
@@ -596,15 +865,15 @@ function render() {
 
 function drawLink(l) {
   var st = linkStyle(l);
-  var g = svg('g', { 'data-link': l.id, 'class': 'link' }, gLinks);
-  var glow = svg('line', { stroke: st.color, 'stroke-width': st.width + 9, 'stroke-opacity': .28, 'stroke-linecap': 'round', display: 'none' }, g);
+  var g = svg('g', { 'data-link': l.id, 'class': 'link' + (isBackboneLink(l) ? '' : ' nonbb') }, gLinks);
+  var glow = svg('line', { stroke: st.color, 'stroke-width': st.width + 9, 'stroke-opacity': .28, 'stroke-linecap': 'round', display: dstat(l) && !l.virtual ? 'inline' : 'none' }, g);
   var trace = svg('line', { stroke: C.path, 'stroke-width': st.width + 5, 'stroke-opacity': .9, 'stroke-linecap': 'round', display: onTrace(l) ? 'inline' : 'none' }, g);
-  var vis = svg('line', { stroke: st.color, 'stroke-width': st.width, 'stroke-opacity': st.opacity, 'stroke-linecap': 'round', 'stroke-dasharray': st.dash }, g);
+  var vis = svg('line', { 'class': 'vis', stroke: st.color, 'stroke-width': st.width, 'stroke-opacity': st.opacity, 'stroke-linecap': 'round', 'stroke-dasharray': st.dash }, g);
   var hit = svg('line', { stroke: 'transparent', 'stroke-width': 16, 'class': 'hit' }, g);
   l.el = { g: g, glow: glow, trace: trace, vis: vis, hit: hit };
   els.links[l.id] = l.el;
-  if (l.virtual) {
-    var cnt = svg('text', { fill: C.countText, 'font-size': 13, 'font-weight': 700, 'text-anchor': 'middle', 'font-family': 'sans-serif', 'pointer-events': 'none' }, g);
+  if (l.virtual && !l.stub) {
+    var cnt = svg('text', { fill: C.countText, 'font-size': 13, 'font-weight': 700, 'text-anchor': 'middle', 'font-family': FONT, 'pointer-events': 'none' }, g);
     cnt.textContent = '\u00d7' + l.count; l.el.count = cnt;
   }
   moveLink(l);
@@ -621,33 +890,51 @@ function moveLink(l) {
 
 function drawNode(n) {
   var p = pos[n.id], g = svg('g', { 'data-node': n.id, 'class': 'node', transform: 'translate(' + p.x + ',' + p.y + ')', cursor: 'pointer' }, gNodes);
-  var hw = n.w / 2, hh = n.h / 2, shape, extra = null;
+  var hw = n.w / 2, hh = n.h / 2, shape, extra = null, ds = dstat(n);
   var edge = C.routerEdge, ew = 1.6, dash = null, fill = C.router, opacity = 1;
-  if (n.status === 'added') { edge = C.added; ew = 3.4; }
-  if (n.status === 'removed') { edge = C.removed; dash = '7 5'; ew = 2.4; opacity = .75; }
+  if (ds === 'added') { edge = C.added; ew = 3.4; }
+  if (ds === 'removed') { edge = C.removed; dash = '7 5'; ew = 2.4; opacity = .75; }
   if (n.stale) { edge = C.oneway; dash = '6 4'; ew = 2.4; }
   if (n.kind === 'router') {
-    if (n.abr) { edge = n.status ? edge : C.abr; ew = Math.max(ew, 3); }
+    if (n.abr) { edge = ds ? edge : C.abr; ew = Math.max(ew, 3); }
     shape = svg('rect', { x: -hw, y: -hh, width: n.w, height: n.h, rx: 10, fill: fill, 'fill-opacity': opacity, stroke: edge, 'stroke-width': ew, 'stroke-dasharray': dash }, g);
     if (n.abr) extra = svg('rect', { x: -hw + 5, y: -hh + 5, width: n.w - 10, height: n.h - 10, rx: 7, fill: 'none', stroke: C.abr, 'stroke-opacity': .55, 'stroke-width': 1 }, g);
+  } else if (n.kind === 'bundle' && n.stub) {
+    shape = svg('rect', { x: -hw, y: -hh, width: n.w, height: n.h, rx: hh, fill: C.net, 'fill-opacity': .85, stroke: C.netEdge, 'stroke-width': 1.6, 'stroke-dasharray': '5 4' }, g);
   } else if (n.kind === 'bundle') {
     svg('rect', { x: -hw + 8, y: -hh - 8, width: n.w, height: n.h, rx: 10, fill: C.bundleA, stroke: C.routerEdge, 'stroke-width': 1 }, g);
     svg('rect', { x: -hw + 4, y: -hh - 4, width: n.w, height: n.h, rx: 10, fill: C.bundleB, stroke: C.routerEdge, 'stroke-width': 1 }, g);
     shape = svg('rect', { x: -hw, y: -hh, width: n.w, height: n.h, rx: 10, fill: fill, stroke: C.routerEdge, 'stroke-width': 2 }, g);
   } else {
     var ghost = n.kind === 'ghost';
-    var pts = [0, -hh, hw, 0, 0, hh, -hw, 0].join(',').replace(/(\d+|-\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),?/g, '$1,$2 ').trim();
-    pts = '0,' + -hh + ' ' + hw + ',0 0,' + hh + ' ' + -hw + ',0';
-    shape = svg('polygon', { points: pts, fill: ghost ? C.ghostFill : C.net, 'fill-opacity': ghost ? .9 : opacity, stroke: ghost ? C.muted : (n.stale ? C.oneway : (n.status === 'added' ? C.added : n.status === 'removed' ? C.removed : C.netEdge)),
-      'stroke-width': n.stale || n.status ? 2.6 : 1.6, 'stroke-dasharray': ghost || n.stale || n.status === 'removed' ? '7 5' : null }, g);
+    var pts = '0,' + -hh + ' ' + hw + ',0 0,' + hh + ' ' + -hw + ',0';
+    shape = svg('polygon', { points: pts, fill: ghost ? C.ghostFill : C.net, 'fill-opacity': ghost ? .9 : opacity, stroke: ghost ? C.muted : (n.stale ? C.oneway : (ds === 'added' ? C.added : ds === 'removed' ? C.removed : C.netEdge)),
+      'stroke-width': n.stale || ds ? 2.6 : 1.6, 'stroke-dasharray': ghost || n.stale || ds === 'removed' ? '7 5' : null }, g);
   }
-  var lines = [n.title].concat(n.sub || []);
-  var dark = n.kind === 'network' || n.kind === 'ghost';
-  var top = -(lines.length - 1) * 8.5;
-  lines.forEach(function (t, i) {
-    var el = svg('text', { x: 0, y: top + i * 17 + 4.5, 'text-anchor': 'middle', 'font-family': 'sans-serif', 'font-size': i === 0 ? 13 : 11, 'font-weight': i === 0 ? 700 : 400,
-      fill: dark ? C.dark : (i === 0 ? C.text : C.subText), 'pointer-events': 'none' }, g);
-    el.textContent = t;
+  // Label hierarchy: line 1 bold name, line 2 muted address, line 3 a small pill (role, else the platform).
+  var flagged = n.kind === 'router' && (n.abr || n.asbr);
+  var pillText = n.kind === 'router' ? (flagged ? n.role : vendorBadge()) : '';
+  var subs = (n.sub || []).filter(function (t) { return !(flagged && t === n.role); });
+  var dark = n.kind === 'network' || n.kind === 'ghost' || (n.kind === 'bundle' && n.stub);
+  var items = [{ t: n.title, k: 'title' }];
+  subs.forEach(function (t) { items.push({ t: t, k: 'sub' }); });
+  if (pillText) items.push({ t: pillText, k: 'pill' });
+  var heights = items.map(function (it) { return it.k === 'pill' ? 20 : 17; });
+  var total = heights.reduce(function (a, b) { return a + b; }, 0), cursor = -total / 2;
+  items.forEach(function (it, i) {
+    var cy = cursor + heights[i] / 2; cursor += heights[i];
+    if (it.k === 'pill') {
+      var w = it.t.length * 5.9 + 14, hot = flagged;
+      var pg = svg('g', { 'class': 'rolepill', 'pointer-events': 'none' }, g);
+      svg('rect', { x: -w / 2, y: cy - 8, width: w, height: 16, rx: 8, fill: hot ? C.abr : '#ffffff', 'fill-opacity': hot ? .95 : .16, stroke: hot ? C.abr : C.subText, 'stroke-opacity': .55, 'stroke-width': 1 }, pg);
+      var pt = svg('text', { x: 0, y: cy + 3.5, 'text-anchor': 'middle', 'font-family': FONT, 'font-size': 10, 'font-weight': 700, fill: hot ? C.dark : C.subText }, pg);
+      pt.textContent = it.t;
+      return;
+    }
+    var numeric = /\d+\.\d+\.\d+\.\d+|^[\d.:\/]+$/.test(it.t);
+    var el = svg('text', { x: 0, y: cy + 4.5, 'text-anchor': 'middle', 'font-family': numeric ? MONO : FONT, 'font-size': i === 0 ? 13 : 11, 'font-weight': i === 0 ? 700 : 400,
+      fill: dark ? C.dark : (i === 0 ? C.text : C.subText), 'pointer-events': 'none', 'class': i === 0 ? null : 'sub' }, g);
+    el.textContent = it.t;
   });
   var ring = svg('rect', { x: -hw - 6, y: -hh - 6, width: n.w + 12, height: n.h + 12, rx: 14, fill: 'none', stroke: C.focus, 'stroke-width': 3.5, display: 'none', 'pointer-events': 'none' }, g);
   els.nodes[n.id] = { g: g, shape: shape, ring: ring };
@@ -677,7 +964,7 @@ function placeLabels() {
     var deg = ang * 180 / Math.PI; if (deg > 90 || deg < -90) deg += 180;
     var g = svg('g', { transform: 'translate(' + x + ',' + y + ') rotate(' + deg + ')', 'pointer-events': 'none' }, gLabels);
     svg('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, fill: C.pillBg, 'fill-opacity': C.pillOpacity, stroke: color, 'stroke-width': 1 / k * .9 }, g);
-    var t = svg('text', { x: 0, y: size * .36, 'text-anchor': 'middle', 'font-size': size, 'font-family': 'sans-serif', fill: C.pillText }, g);
+    var t = svg('text', { x: 0, y: size * .36, 'text-anchor': 'middle', 'font-size': size, 'font-family': MONO, fill: C.pillText }, g);
     t.textContent = text;
     return true;
   }
@@ -689,25 +976,37 @@ function placeLabels() {
   ordered.forEach(function (l) {
     if (sim.active && (sim.disabledLinks.has(l.id) || sim.costOverrides.has(l.id))) return;   // the simulation overlay labels these
     var e = l.geo, len = Math.hypot(e.pb.x - e.pa.x, e.pb.y - e.pa.y), ends = l.ends || [];
-    var show = hot[l.id] || (state.show.costs && !l.oneWay);
+    var show = hot[l.id] || (state.show.costs && !l.oneWay && k >= .5);
     if (!show) return;
-    var showIf = hot[l.id] || state.show.ifaces || k >= 1.8;
-    if (hot[l.id] || k >= 1.8 || state.show.ifaces) {
+    var showIf = hot[l.id] || state.show.ifaces || k >= 1.2;
+    if (hot[l.id] || k >= 1.2 || state.show.ifaces) {
       // one label per end: cost, plus the interface when asked for
       ends.forEach(function (end) {
         var fromA = end.from === l.a, p0 = fromA ? e.pa : e.pb, dir = fromA ? 1 : -1;
         var off = Math.min(len * .3, 46 / Math.min(1.4, Math.max(.7, k)) + 20);
         var x = p0.x + Math.cos(e.ang) * dir * off, y = p0.y + Math.sin(e.ang) * dir * off;
-        var text = (end.metric != null ? (end.old != null ? end.old + '\u2192' + end.new : end.metric) : '') + (showIf && end.iface ? '  ' + end.iface : '');
+        var text = (end.metric != null ? endCost(end) : '') + (showIf && end.iface ? '  ' + end.iface : '');
         if (text.trim()) label(x, y, e.ang, text.trim(), stateColor(l.state) || C.pillEdge, !!hot[l.id]);
       });
     } else if (l.metric != null) {
-      var costs = ends.map(function (x) { return x.old != null ? x.old + '\u2192' + x.new : x.metric; });
+      var costs = ends.map(endCost);
       var text = costs.length === 2 && costs[0] !== costs[1] ? costs.join(' / ') : String(costs[0]);
       if (len > textW(text, size) + 40) label((e.pa.x + e.pb.x) / 2, (e.pa.y + e.pb.y) / 2, e.ang, text, C.pillEdge, false);
     }
   });
+  if (k >= .5) model.links.forEach(function (l) {        // [2x]: several parallel links drawn as one line
+    if (l.virtual || !l.geo || !(l.parallel > 1)) return;
+    var e = l.geo;
+    label(e.pa.x + (e.pb.x - e.pa.x) * .36, e.pa.y + (e.pb.y - e.pa.y) * .36, e.ang, '[' + l.parallel + 'x]', C.accent, true);
+  });
+  var sl = state.sel && state.sel.type === 'link' ? links[state.sel.id] : state.hover && state.hover.type === 'link' ? links[state.hover.id] : null;
+  if (sl && sl.geo && sl.ends && sl.ends.length === 2 && sl.ends[0].iface && sl.ends[1].iface) {   // Eth1/1 <---> Gi0/0/1
+    var ea = sl.ends.filter(function (x) { return x.from === sl.a; })[0] || sl.ends[0], eb = sl.ends.filter(function (x) { return x !== ea; })[0];
+    label((sl.geo.pa.x + sl.geo.pb.x) / 2, (sl.geo.pa.y + sl.geo.pb.y) / 2, sl.geo.ang, ea.iface + ' <---> ' + eb.iface, C.pillEdge, true);
+  }
   drawSimFx();
+  drawDiffOverlay();
+  scheduleMinimap();
 }
 function hotLinks() {
   var out = {};
@@ -740,13 +1039,42 @@ function applyDim() {
     var dim = lit && !litLinks[l.id];
     l.el.g.setAttribute('opacity', dim ? .1 : 1);
     var on = state.hover && state.hover.type === 'link' && state.hover.id === l.id || state.sel && state.sel.type === 'link' && state.sel.id === l.id;
-    l.el.glow.setAttribute('display', on || litLinks[l.id] && state.focus ? 'inline' : 'none');
+    l.el.glow.setAttribute('display', on || litLinks[l.id] && state.focus || (dstat(l) && !l.virtual) ? 'inline' : 'none');
+  });
+  applyEgoDimming();
+}
+// Focus mode: hovering or selecting a router lights its 1-hop and 2-hop neighbourhood (2-hop a little softer)
+// and dims everything else to 15 %. A search, a diagnostics click or a selected link keep their own dimming.
+function applyEgoDimming() {
+  if (!state.ego || state.focus || state.matches) return;
+  var id = state.hover && state.hover.type === 'node' ? state.hover.id : state.sel && state.sel.type === 'node' ? state.sel.id : null;
+  if (!id || !adj[id]) return;
+  var hop = {}, lk = {};                  // node id -> 0 / 1 / 2 hops; link id -> 1 (touches the centre) or 2 (touches a 1-hop node)
+  hop[id] = 0;
+  adj[id].forEach(function (lid) { var l = links[lid], o = l.a === id ? l.b : l.a; lk[lid] = 1; if (hop[o] === undefined) hop[o] = 1; });
+  Object.keys(hop).forEach(function (h) {
+    if (hop[h] !== 1) return;
+    (adj[h] || []).forEach(function (lid) { var l = links[lid], o = l.a === h ? l.b : l.a; if (!lk[lid]) lk[lid] = 2; if (hop[o] === undefined) hop[o] = 2; });
+  });
+  function level(h) { return h === undefined ? .15 : h === 2 ? .6 : 1; }
+  model.nodes.forEach(function (n) {
+    var e = els.nodes[n.id]; if (!e) return;
+    var op = level(hop[n.kind === 'bundle' ? n.hub : n.id]);                // a badge follows the router it hangs off
+    if (sim.active && sim.disabledNodes.has(n.id)) op = Math.min(op, .35);
+    e.g.setAttribute('opacity', op);
+  });
+  model.links.forEach(function (l) {
+    var op = l.virtual ? level(hop[l.na && l.na.kind === 'bundle' ? l.na.hub : l.nb.hub]) : (lk[l.id] === 1 ? 1 : lk[l.id] === 2 ? .6 : .15);
+    l.el.g.setAttribute('opacity', op);
   });
 }
 
 // ------------------------------------------------------------------ view (pan / zoom)
 function applyView() {
   vp.setAttribute('transform', 'translate(' + state.view.x + ',' + state.view.y + ') scale(' + state.view.k + ')');
+  canvas.classList.toggle('lod-low', state.view.k < .5);     // < 0.50: names and backbone only
+  canvas.classList.toggle('lod-high', state.view.k > 1.2);   // > 1.20: interface names appear
+  scheduleMinimap();
 }
 function stageSize() { return { w: canvas.clientWidth || 1200, h: canvas.clientHeight || 800 }; }
 var labelTimer = null;
@@ -765,16 +1093,134 @@ function bounds(ids) {
   if (!ids && state.show.areas) SCENE.areas.forEach(function (a) { if (state.hiddenAreas[a.id]) return; x0 = Math.min(x0, a.x); y0 = Math.min(y0, a.y); x1 = Math.max(x1, a.x + a.w); y1 = Math.max(y1, a.y + a.h); });
   return x0 === Infinity ? { x0: 0, y0: 0, x1: 100, y1: 100 } : { x0: x0, y0: y0, x1: x1, y1: y1 };
 }
-function fit(ids, maxK) {
+function fit(ids, maxK, smooth) {
   var b = bounds(ids), s = stageSize(), pad = ids ? 140 : 70, top = 60 + (sim.active ? $('sim-bar').offsetHeight + 4 : 0);
   var k = Math.min((s.w - 2 * pad) / Math.max(1, b.x1 - b.x0), (s.h - 2 * pad - top) / Math.max(1, b.y1 - b.y0));
   k = Math.max(.08, Math.min(maxK || 1.4, k));
   state.view = { k: k, x: (s.w - (b.x1 - b.x0) * k) / 2 - b.x0 * k, y: top + (s.h - top - (b.y1 - b.y0) * k) / 2 - b.y0 * k };
+  if (smooth && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {   // glide instead of jump
+    vp.classList.add('smooth'); clearTimeout(smoothTimer); smoothTimer = setTimeout(function () { vp.classList.remove('smooth'); }, 420);
+  }
   afterView();
 }
+var smoothTimer = null;
 function toWorld(ev) {
   var r = canvas.getBoundingClientRect();
   return { x: (ev.clientX - r.left - state.view.x) / state.view.k, y: (ev.clientY - r.top - state.view.y) / state.view.k };
+}
+
+// ------------------------------------------------------------------ minimap radar (160 x 100 canvas)
+var mm = $('minimap'), mmx = mm.getContext && !/jsdom/i.test(navigator.userAgent) ? mm.getContext('2d') : null,   // jsdom has no canvas: no radar there
+     mmRaf = 0, mmDrag = false, mmFrozen = null, MMW = 160, MMH = 100;
+function mmSetup() {
+  if (!mmx) return;
+  var dpr = window.devicePixelRatio || 1;
+  mm.width = Math.round(MMW * dpr); mm.height = Math.round(MMH * dpr);
+  mmx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function mmViewRect() {
+  var s = stageSize(), k = state.view.k, x0 = -state.view.x / k, y0 = -state.view.y / k;
+  return { x0: x0, y0: y0, x1: x0 + s.w / k, y1: y0 + s.h / k };
+}
+// the world rectangle the minimap shows: everything drawn plus the visible window (so the window never leaves the radar)
+function mmFrame() {
+  var b = bounds(), v = mmViewRect();
+  var f = { x0: Math.min(b.x0, v.x0), y0: Math.min(b.y0, v.y0), x1: Math.max(b.x1, v.x1), y1: Math.max(b.y1, v.y1) }, pad = 8;
+  var sc = Math.min((MMW - 2 * pad) / Math.max(1, f.x1 - f.x0), (MMH - 2 * pad) / Math.max(1, f.y1 - f.y0));
+  return { sc: sc, ox: (MMW - (f.x1 - f.x0) * sc) / 2 - f.x0 * sc, oy: (MMH - (f.y1 - f.y0) * sc) / 2 - f.y0 * sc };
+}
+function drawMinimap() {
+  if (!mmx || !model.nodes.length) return;
+  var f = mmDrag && mmFrozen ? mmFrozen : mmFrame(), v = mmViewRect();
+  function X(x) { return x * f.sc + f.ox; }
+  function Y(y) { return y * f.sc + f.oy; }
+  mmx.clearRect(0, 0, MMW, MMH);
+  if (state.show.areas) SCENE.areas.forEach(function (a) {
+    if (state.hiddenAreas[a.id]) return;
+    mmx.globalAlpha = .6; mmx.strokeStyle = C.area; mmx.lineWidth = 1;
+    mmx.strokeRect(X(a.x), Y(a.y), a.w * f.sc, a.h * f.sc);
+  });
+  mmx.globalAlpha = 1; mmx.lineWidth = 1;
+  model.links.forEach(function (l) {
+    if (!l.geo) return;
+    var ds = dstat(l);
+    mmx.strokeStyle = sim.active && sim.disabledLinks.has(l.id) ? C.simBad : ds === 'added' ? C.added : ds === 'removed' ? C.removed : ds === 'changed' ? C.changed : C.link;
+    mmx.globalAlpha = l.virtual ? .5 : .75;
+    mmx.beginPath(); mmx.moveTo(X(l.geo.pa.x), Y(l.geo.pa.y)); mmx.lineTo(X(l.geo.pb.x), Y(l.geo.pb.y)); mmx.stroke();
+  });
+  mmx.globalAlpha = 1;
+  model.nodes.forEach(function (n) {
+    var p = pos[n.id]; if (!p) return;
+    var ds = dstat(n), bs = sim.active ? blastState(n.id) : '';
+    mmx.fillStyle = bs === 'isolated' ? C.simBad : bs === 'spof' ? C.simWarn : bs === 'rerouted' ? C.simBlue
+      : ds === 'added' ? C.added : ds === 'removed' ? C.removed : n.kind === 'router' ? (n.abr ? C.abr : C.router) : n.kind === 'ghost' ? C.ghost : n.kind === 'bundle' ? C.bundleB : C.net;
+    if (sim.active && sim.disabledNodes.has(n.id)) mmx.fillStyle = C.simBad;
+    mmx.beginPath(); mmx.arc(X(p.x), Y(p.y), n.kind === 'router' ? 2.4 : 1.9, 0, 6.2832); mmx.fill();
+  });
+  mmx.fillStyle = C.accent; mmx.globalAlpha = .14;
+  mmx.fillRect(X(v.x0), Y(v.y0), (v.x1 - v.x0) * f.sc, (v.y1 - v.y0) * f.sc);
+  mmx.globalAlpha = 1; mmx.strokeStyle = C.accent; mmx.lineWidth = 1.5;
+  mmx.strokeRect(X(v.x0), Y(v.y0), (v.x1 - v.x0) * f.sc, (v.y1 - v.y0) * f.sc);
+}
+function scheduleMinimap() { if (mmRaf) return; mmRaf = requestAnimationFrame(function () { mmRaf = 0; drawMinimap(); }); }
+function mmGo(ev) {                     // centre the window on the point of the radar that was clicked
+  var f = mmFrozen || mmFrame(), r = mm.getBoundingClientRect(), s = stageSize(), k = state.view.k;
+  var px = (ev.clientX - r.left) * MMW / (r.width || MMW), py = (ev.clientY - r.top) * MMH / (r.height || MMH);
+  state.view.x = s.w / 2 - ((px - f.ox) / f.sc) * k; state.view.y = s.h / 2 - ((py - f.oy) / f.sc) * k;
+  afterView();
+}
+mm.addEventListener('mousedown', function (ev) { mmFrozen = mmFrame(); mmDrag = true; mmGo(ev); ev.preventDefault(); ev.stopPropagation(); });
+window.addEventListener('mousemove', function (ev) { if (mmDrag) mmGo(ev); });
+window.addEventListener('mouseup', function () { if (mmDrag) { mmDrag = false; mmFrozen = null; scheduleMinimap(); } });
+
+// ------------------------------------------------------------------ diff overlay: badges on top of what changed (overlay mode only)
+var gDiff = $('diffovl');
+function drawDiffOverlay() {
+  gDiff.textContent = '';
+  if (state.time !== 'overlay') return;
+  var k = state.view.k;
+  model.nodes.forEach(function (n) {
+    var ds = n.status, p = pos[n.id];
+    if (!ds || !p || n.kind === 'bundle') return;
+    var col = ds === 'added' ? C.added : C.removed;
+    var g = svg('g', { transform: 'translate(' + (p.x - n.w / 2) + ',' + (p.y - n.h / 2) + ')' }, gDiff);
+    svg('circle', { cx: 0, cy: 0, r: 10, fill: col, stroke: C.pillBg, 'stroke-width': 2 }, g);
+    var t = svg('text', { x: 0, y: 4.5, 'text-anchor': 'middle', 'font-family': FONT, 'font-size': 14, 'font-weight': 800, fill: '#ffffff' }, g);
+    t.textContent = ds === 'added' ? '+' : '\u2212';
+  });
+  if (k < .5) return;
+  model.links.forEach(function (l) {
+    if (l.virtual || !l.geo || (l.status !== 'added' && l.status !== 'removed')) return;
+    var e = l.geo;
+    simPill(gDiff, e.pa.x + (e.pb.x - e.pa.x) * .62, e.pa.y + (e.pb.y - e.pa.y) * .62, e.ang * 180 / Math.PI, l.status === 'added' ? 'NEW' : 'REMOVED', l.status === 'added' ? C.added : C.removed);
+  });
+}
+function buildDiffBar() {
+  var c = SCENE.diagnostics.changes, has = !!c.baseline, bits = [];
+  if (c.addedNodes.length) bits.push('+' + c.addedNodes.length + ' node' + (c.addedNodes.length > 1 ? 's' : ''));
+  if (c.removedNodes.length) bits.push('\u2212' + c.removedNodes.length + ' node' + (c.removedNodes.length > 1 ? 's' : ''));
+  if (c.addedLinks) bits.push('+' + c.addedLinks + ' link' + (c.addedLinks > 1 ? 's' : ''));
+  if (c.removedLinks) bits.push('\u2212' + c.removedLinks + ' link' + (c.removedLinks > 1 ? 's' : ''));
+  if (c.metricChanges) bits.push(c.metricChanges + ' cost change' + (c.metricChanges > 1 ? 's' : ''));
+  $('diff-sum').textContent = !has ? 'No earlier snapshot to compare with yet' : bits.length ? bits.join('  ') : 'No changes since the last run';
+  Array.prototype.forEach.call(document.querySelectorAll('#diff-bar [data-time]'), function (b) {
+    b.addEventListener('click', function () { setTime(b.getAttribute('data-time')); });
+  });
+  syncDiffBar();
+}
+function syncDiffBar() {
+  var has = !!SCENE.diagnostics.changes.baseline;
+  Array.prototype.forEach.call(document.querySelectorAll('#diff-bar [data-time]'), function (b) {
+    var m = b.getAttribute('data-time'), on = state.time === m;
+    b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
+    b.disabled = (m !== 'overlay' && !has) || (sim.active && m !== 'current');
+  });
+}
+var TIME_NOTE = { current: 'Current state: removed items are hidden', previous: 'Previous state: new items are hidden, changed costs show their old value', overlay: 'Diff overlay: green added, red dashed removed, orange changed' };
+function setTime(mode) {
+  if (mode !== 'overlay' && !SCENE.diagnostics.changes.baseline) { toast('No earlier snapshot to compare with yet'); return; }
+  if (sim.active && mode !== 'current') { toast('Leave simulation mode to compare snapshots'); return; }
+  state.time = mode; syncDiffBar(); render(); toast(TIME_NOTE[mode]);
 }
 
 // ------------------------------------------------------------------ tooltip
@@ -799,7 +1245,7 @@ function linkTip(l) {
   (l.ends || []).forEach(function (e) {
     h += '<div style="margin-top:6px"><span class="k">' + esc(nodeLabel(e.from)) + ' \u2192 ' + esc(nodeLabel(e.to)) + '</span><br>' +
       'Interface: <b>' + esc(e.iface || '?') + '</b>' + (e.ip ? ' | IP: <b>' + esc(e.ip) + '</b>' : '') + '<br>' +
-      'Cost: <b>' + (e.old != null ? esc(e.old) + ' \u2192 ' + esc(e.new) : esc(e.metric)) + '</b> | Status: <span class="' + stateClass(e.state) + '">' + esc(stateWord(e.state)) + '</span></div>';
+      'Cost: <b class="num">' + esc(e.old != null ? String(endCost(e)).replace('\u2192', ' \u2192 ') : e.metric) + '</b> | Status: ' + statePill(e.state) + (e.state ? ' <span class="' + stateClass(e.state) + '">' + esc(e.state) + '</span>' : '') + '</div>';
   });
   return h;
 }
@@ -826,7 +1272,7 @@ canvas.addEventListener('mousedown', function (ev) {
   if (document.activeElement && document.activeElement.blur && document.activeElement !== document.body) document.activeElement.blur();
   if (nodeEl) {
     var id = nodeEl.getAttribute('data-node'), w = toWorld(ev);
-    var movers = id.indexOf('bundle:') === 0 ? model.bundles[id.slice(7)] : [id];
+    var movers = groupOf(id) || [id];
     drag = { type: 'node', id: id, movers: movers, start: w, orig: movers.map(function (m) { return { x: pos[m].x, y: pos[m].y }; }), px: ev.clientX, py: ev.clientY, moved: false };
   } else {
     drag = { type: 'pan', px: ev.clientX, py: ev.clientY, vx: state.view.x, vy: state.view.y, moved: false };
@@ -842,19 +1288,20 @@ window.addEventListener('mousemove', function (ev) {
   if (drag.type === 'pan') { state.view.x = drag.vx + dx; state.view.y = drag.vy + dy; applyView(); return; }
   var w = toWorld(ev), mx = w.x - drag.start.x, my = w.y - drag.start.y;
   drag.movers.forEach(function (m, i) { pos[m] = { x: drag.orig[i].x + mx, y: drag.orig[i].y + my }; moveNode(m); });
-  var h = drag.id.indexOf('bundle:') === 0 ? drag.id.slice(7) : null;
+  var h = isGroupId(drag.id) ? drag.id : null;
   if (h) { pos[drag.id] = { x: drag.orig[0].x + mx, y: drag.orig[0].y + my }; }
-  if (drag.id.indexOf('bundle:') === 0) { var bn = model.nodes.filter(function (n) { return n.id === drag.id; })[0]; if (bn) { var cx = 0, cy = 0; drag.movers.forEach(function (m) { cx += pos[m].x; cy += pos[m].y; }); pos[drag.id] = { x: cx / drag.movers.length, y: cy / drag.movers.length }; } }
+  if (isGroupId(drag.id)) { var bn = model.nodes.filter(function (n) { return n.id === drag.id; })[0]; if (bn) { var cx = 0, cy = 0; drag.movers.forEach(function (m) { cx += pos[m].x; cy += pos[m].y; }); pos[drag.id] = { x: cx / drag.movers.length, y: cy / drag.movers.length }; } }
   moveNode(drag.id);
   model.links.forEach(function (l) { if (l.a === drag.id || l.b === drag.id || drag.movers.indexOf(l.a) >= 0 || drag.movers.indexOf(l.b) >= 0) moveLink(l); });
   if (sim.active) drawSimFx();
+  drawDiffOverlay(); scheduleMinimap();
 });
 window.addEventListener('mouseup', function (ev) {
   if (!drag) return;
   var d = drag; drag = null; canvas.classList.remove('panning');
   if (d.type === 'node') {
     if (d.moved) { saveLayout(); placeLabels(); toast('Position saved'); }
-    else if (d.id.indexOf('bundle:') === 0) { state.bundle.expanded[d.id.slice(7)] = true; render(); toast('Bundle expanded'); }
+    else if (isGroupId(d.id)) { expandGroup(d.id); render(); toast(d.id.indexOf('stubs:') === 0 ? 'Stub networks shown' : 'Bundle expanded'); }
     else { select({ type: 'node', id: d.id }); if (sim.active) openSimPopover('node', d.id, ev); }
   } else if (!d.moved) {
     var linkEl = ev.target.closest && ev.target.closest('[data-link]');
@@ -872,7 +1319,7 @@ canvas.addEventListener('mouseover', function (ev) {
   var nodeEl = ev.target.closest && ev.target.closest('[data-node]'), linkEl = ev.target.closest && ev.target.closest('[data-link]');
   if (nodeEl) {
     var id = nodeEl.getAttribute('data-node'), n = model.nodes.filter(function (m) { return m.id === id; })[0] || nodes[id];
-    state.hover = { type: 'node', id: id }; showTip(nodeTip(n), ev); placeLabels();
+    state.hover = { type: 'node', id: id }; applyDim(); showTip(nodeTip(n), ev); placeLabels();
   } else if (linkEl) {
     var lid = linkEl.getAttribute('data-link'), l = model.links.filter(function (m) { return m.id === lid; })[0];
     if (!l) return;
@@ -887,27 +1334,122 @@ canvas.addEventListener('mouseout', function (ev) {
 });
 
 function select(sel) { state.sel = sel; applyDim(); placeLabels(); showSelection(); }
-function clearSelection() { if (!state.sel && !state.focus) return; state.sel = null; state.focus = null; $('sel').className = 'hidden'; applyDim(); placeLabels(); }
+function clearSelection() { if (!state.sel && !state.focus) return; state.sel = null; state.focus = null; hideInspector(); applyDim(); placeLabels(); }
+// ------------------------------------------------------------------ tabbed inspector (Overview | Interfaces & Peers | CLI Diagnostics)
+var insp = { tab: 'ov', filter: '' };
+function hideInspector() { $('sel').className = 'hidden'; $('insp-empty').classList.remove('hidden'); }
+function findingsOf(id) { return SCENE.findings.filter(function (x) { return x.focus.indexOf(id) >= 0; }); }
+function nodeHealth(n) {
+  var ls = (adj[n.id] || []).map(function (i) { return links[i]; });
+  if (n.status === 'removed' || (sim.active && sim.disabledNodes.has(n.id))) return pill('down', 'DOWN');
+  if (n.kind === 'router' && ls.length && ls.every(function (l) { return l.state && l.state !== 'Full' && !STATE_COLOR[l.state]; })) return pill('down', 'DOWN');
+  var bad = findingsOf(n.id).length || n.stale || ls.some(function (l) { return l.oneWay || (l.state && l.state !== 'Full'); });
+  return bad ? pill('warn', 'DEGRADED') : pill('up', 'UP');
+}
+function kv(rows) {
+  return '<dl class="kv">' + rows.filter(function (r) { return r[1] !== undefined && r[1] !== null && r[1] !== ''; }).map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + (r[2] ? r[1] : esc(r[1])) + '</dd>'; }).join('') + '</dl>';
+}
+function endOf(l, from) { return (l.ends || []).filter(function (e) { return e.from === from; })[0]; }
+function memberRows(l) {
+  if (!(l.parallel > 1)) return '';
+  return '<h6>' + l.parallel + ' parallel links (drawn as one line)</h6>' + (l.members || []).map(function (m, i) {
+    return '<div class="sub2 num">#' + (i + 1) + ' \u00b7 cost ' + esc(m.metric) + (m.ip ? ' \u00b7 ' + esc(m.ip) : '') + '</div>';
+  }).join('');
+}
+function overviewTab(s) {
+  if (s.type === 'link') {
+    var l = links[s.id], h = '';
+    h += '<div>' + statePill(l.state) + (l.status ? ' ' + pill('info', l.status.toUpperCase()) : '') + (l.oneWay ? ' ' + pill('warn', 'ONE-WAY') : '') + (l.unverified ? ' ' + pill('warn', 'UNVERIFIED') : '') + '</div>';
+    h += kv([['From', nodeLabel(l.a)], ['To', nodeLabel(l.b)], ['Type', l.kind === 'segment' ? 'Transit segment' : 'Point-to-point'], ['Parallel', l.parallel > 1 ? '[' + l.parallel + 'x]' : ''],
+      ['Cost ' + nodeLabel(l.a) + ' \u2192 ' + nodeLabel(l.b), (endOf(l, l.a) ? String(endCost(endOf(l, l.a))) : ''), 0], ['Cost ' + nodeLabel(l.b) + ' \u2192 ' + nodeLabel(l.a), (endOf(l, l.b) ? String(endCost(endOf(l, l.b))) : ''), 0]]);
+    return h;
+  }
+  var n = nodes[s.id], fs = findingsOf(n.id).slice(0, 6), dr = (n.sub || []).filter(function (t) { return /^DR /.test(t); })[0];
+  var html = '<div>' + nodeHealth(n) + (n.role ? ' <span class="pill info">' + esc(n.role) + '</span>' : '') + (n.status ? ' ' + pill('info', n.status.toUpperCase()) : '') + '</div>';
+  html += kv([['Name', n.title], [n.kind === 'router' ? 'Router ID' : 'Network', n.kind === 'router' ? n.id : (n.prefix || n.id)], ['Role / tier', n.kind === 'router' ? (n.role || 'Router') + (n.areas.length ? ' \u00b7 area ' + n.areas.join(', ') : '') : (n.kind === 'ghost' ? 'Network (no LSA)' : 'Transit network' + (dr ? ' (' + dr + ')' : ''))],
+    ['Vendor', n.kind === 'router' ? (SCENE.meta.device_type ? vendorName(guessVendor(SCENE.meta.device_type)) || SCENE.meta.device_type : '') : ''], ['OS version', n.kind === 'router' ? 'not collected by the OSPF poll' : ''],
+    ['LSA age', n.age != null ? n.age + ' s' : ''], ['Links', String((adj[n.id] || []).length)], ['Prefixes', n.prefix_count ? String(n.prefix_count) : '']]);
+  if (fs.length) html += '<h6>Findings</h6>' + fs.map(function (x) { return '<div class="sub2">' + pill(x.severity === 'critical' ? 'down' : x.severity === 'warning' ? 'warn' : 'info', x.severity.toUpperCase()) + ' ' + esc(x.message) + '</div>'; }).join('');
+  return html;
+}
+function peersTab(s) {
+  var q = insp.filter.toLowerCase(), html = '<input class="flt" id="insp-flt" type="search" placeholder="Filter by peer, interface or IP" value="' + esc(insp.filter) + '" autocomplete="off">';
+  var list = s.type === 'link' ? [links[s.id]] : (adj[s.id] || []).map(function (i) { return links[i]; });
+  var rows = '';
+  list.forEach(function (l) {
+    var me = s.type === 'link' ? l.a : s.id, peer = l.a === me ? l.b : l.a;
+    var le = endOf(l, me), re = endOf(l, peer);
+    var hay = [nodeLabel(peer), le && le.iface, re && re.iface, le && le.ip, re && re.ip].join(' ').toLowerCase();
+    if (q && hay.indexOf(q) < 0) return;
+    rows += '<div class="peer"><span>' + (s.type === 'link' ? '<b>' + esc(nodeLabel(me)) + '</b> \u21c4 ' : '') + '<button class="go" data-go="' + esc(peer) + '" type="button">' + esc(nodeLabel(peer)) + '</button> ' + (l.parallel > 1 ? '<span class="pill info">[' + l.parallel + 'x]</span>' : '') + '</span><span>' + statePill(l.state) + '</span>' +
+      '<span class="sub2 num">' + esc((le && le.iface) || '?') + ' \u21c4 ' + esc((re && re.iface) || (nodes[peer].kind === 'router' ? '?' : 'segment')) + ' \u00b7 cost ' + esc(le ? endCost(le) : '?') + (le && le.ip ? ' \u00b7 ' + esc(le.ip) : '') + (l.oneWay ? ' \u00b7 one-way' : '') + '</span>' + memberRows(l) + '</div>';
+  });
+  return html + (rows || '<div class="note">No matching interfaces.</div>');
+}
+function cliContext(s) {
+  if (s.type === 'link') {
+    var l = links[s.id];
+    return { kind: 'link', ends: (l.ends || []).filter(function (e) { return nodes[e.from] && nodes[e.from].kind === 'router'; }).map(function (e) { return { device: nodeLabel(e.from), rid: e.from, iface: e.iface }; }) };
+  }
+  var n = nodes[s.id];
+  return n.kind === 'router' ? { kind: 'node', rid: n.id, name: n.title } : { kind: 'network', name: n.title };
+}
+function savedVendor() { try { var v = localStorage.getItem('ospf-explorer:vendor'); return CLI_TABLE[v] ? v : null; } catch (e) { return null; } }
+function cliVendor() { return state.vendor || savedVendor() || cliGuess(SCENE.meta.device_type) || 'cisco_ios'; }
+function cliTab(s) {
+  var v = cliVendor(), blocks = cliRunbook(v, cliContext(s));
+  var html = '<select id="insp-vendor" aria-label="Platform">' + CLI_VENDORS.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === v ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>';
+  blocks.forEach(function (b, i) {
+    html += '<div class="cli"><header><span>' + esc(b.title) + '</span><button type="button" data-copy="' + i + '">Copy CLI</button></header><pre>' + esc(b.cmds.join('\n')) + '</pre></div>';
+  });
+  html += '<div class="note">Read-only <b>show</b> commands. Standard syntax of the chosen platform: check it against your software version.' + (SCENE.meta.device_type ? '' : ' The platform is not recorded in this run, so pick it above.') + '</div>';
+  return { html: html, blocks: blocks };
+}
+function copyText(text, btn) {
+  function done(ok) { if (btn) { var old = btn.textContent; btn.textContent = ok ? 'Copied' : 'Press Ctrl+C'; setTimeout(function () { btn.textContent = old; }, 1400); } toast(ok ? 'Copied to the clipboard' : 'Could not copy: select the text and press Ctrl+C'); }
+  function fallback() {
+    var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } ta.remove(); done(ok);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback); else fallback();
+}
+function renderTab() {
+  var s = state.sel, body = $('sel').querySelector('.tabbody');
+  if (!s || !body) return;
+  Array.prototype.forEach.call($('sel').querySelectorAll('.tabs button'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === insp.tab); b.setAttribute('aria-selected', String(b.getAttribute('data-tab') === insp.tab)); });
+  var blocks = null;
+  if (insp.tab === 'ov') body.innerHTML = overviewTab(s);
+  else if (insp.tab === 'if') body.innerHTML = peersTab(s);
+  else { var c = cliTab(s); body.innerHTML = c.html; blocks = c.blocks; }
+  Array.prototype.forEach.call(body.querySelectorAll('[data-go]'), function (b) { b.onclick = function () { var id = b.getAttribute('data-go'); focusOn('Found ' + nodeLabel(id), [id], []); state.focus = null; select({ type: 'node', id: id }); }; });
+  var flt = $('insp-flt'); if (flt) flt.oninput = function () { insp.filter = flt.value; var at = flt.selectionStart; renderTab(); var f2 = $('insp-flt'); f2.focus(); f2.setSelectionRange(at, at); };
+  var vs = $('insp-vendor'); if (vs) vs.onchange = function () { state.vendor = vs.value; try { localStorage.setItem('ospf-explorer:vendor', vs.value); } catch (e) { /* blocked */ } renderTab(); };
+  Array.prototype.forEach.call(body.querySelectorAll('[data-copy]'), function (b) { b.onclick = function () { copyText(blocks[+b.getAttribute('data-copy')].cmds.join('\n'), b); }; });
+}
 function showSelection() {
   var box = $('sel');
-  if (!state.sel) { box.className = 'hidden'; return; }
-  var html = '';
-  if (state.sel.type === 'node') {
-    var n = nodes[state.sel.id]; html = nodeTip(n);
-    var rel = SCENE.findings.filter(function (x) { return x.focus.indexOf(n.id) >= 0; }).slice(0, 6);
-    if (rel.length) html += '<div style="margin-top:6px" class="k">Findings:</div>' + rel.map(function (x) { return '<div>\u2022 ' + esc(x.message) + '</div>'; }).join('');
-  } else { html = linkTip(links[state.sel.id]); }
-  box.innerHTML = html + '<div style="margin-top:8px"><button id="sel-clear">Clear selection</button></div>';
-  box.className = ''; $('sel-clear').onclick = clearSelection;
+  if (!state.sel) { hideInspector(); return; }
+  var s = state.sel, title, sub;
+  if (s.type === 'node') { var n = nodes[s.id]; title = n.title; sub = n.kind === 'router' ? 'Router' : 'Network'; }
+  else { var l = links[s.id]; title = nodeLabel(l.a) + ' \u2194 ' + nodeLabel(l.b); sub = 'Link'; }
+  if (insp.kind !== s.type) { insp.tab = 'ov'; insp.filter = ''; }
+  insp.kind = s.type;
+  $('insp-empty').classList.add('hidden');
+  box.innerHTML = '<div class="ih"><b>' + esc(title) + '</b><button id="sel-clear" class="x" type="button" title="Clear selection (Esc)">Clear selection</button></div>' +
+    '<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="ov">Overview</button><button type="button" role="tab" data-tab="if">Interfaces &amp; Peers</button><button type="button" role="tab" data-tab="cli">CLI Diagnostics</button></div><div class="tabbody"></div>';
+  Array.prototype.forEach.call(box.querySelectorAll('.tabs button'), function (b) { b.onclick = function () { insp.tab = b.getAttribute('data-tab'); renderTab(); }; });
+  $('sel-clear').onclick = clearSelection;
+  box.className = '';
+  renderTab();
 }
 function focusOn(label, nodeIds, linkIds) {
   var ids = nodeIds.filter(function (i) { return nodes[i]; });
   state.focus = { label: label, nodes: ids, links: linkIds || [] };
-  state.sel = null; $('sel').className = 'hidden';
+  state.sel = null; hideInspector();
   var hidden = false;
   if (state.bundle.on) ids.forEach(function (i) { if (!model.nodes.some(function (n) { return n.id === i; })) hidden = true; });
   if (hidden) render(); else { applyDim(); placeLabels(); }
-  if (ids.length) fit(ids, 1.25);
+  if (ids.length) fit(ids, 1.25, true);
   toast(label);
 }
 
@@ -924,11 +1466,163 @@ function runSearch(q) {
   if (state.bundle.on) render(); else applyDim();
   return hits;
 }
-$('q').addEventListener('input', function (ev) { runSearch(ev.target.value); });
+var resultIds = [], resultCur = -1;
+function hideResults() { $('search-results').classList.add('hidden'); resultCur = -1; }
+function markResult(i) {
+  resultCur = i;
+  Array.prototype.forEach.call($('search-results').children, function (b, j) { b.classList.toggle('cur', j === i); });
+}
+function showResults(hits) {
+  var box = $('search-results'); box.textContent = ''; resultIds = hits.slice(0, 8); resultCur = -1;
+  if (!resultIds.length || !$('q').value.trim()) { hideResults(); return; }
+  resultIds.forEach(function (id) {
+    var n = nodes[id], b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'option');
+    b.innerHTML = '<b>' + esc(n.title) + '</b><small>' + esc(n.kind === 'router' ? (n.role || 'router') : 'network') + ' \u00b7 area ' + esc(n.areas.join(',') || '?') + '</small>';
+    b.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+    b.addEventListener('click', function () { goTo(id); });
+    box.appendChild(b);
+  });
+  var r = $('q').getBoundingClientRect(), s = $('stage').getBoundingClientRect();
+  box.style.left = Math.max(8, Math.min(r.left - s.left, s.width - 308)) + 'px'; box.style.top = (r.bottom - s.top + 6) + 'px';
+  box.classList.remove('hidden');
+}
+function goTo(id) {         // glide to a device and select it
+  hideResults(); $('q').value = ''; $('q').blur(); runSearch('');
+  focusOn('Found ' + nodeLabel(id), [id], []); state.focus = null; select({ type: 'node', id: id });
+}
+$('q').addEventListener('input', function (ev) { showResults(runSearch(ev.target.value)); });
+$('q').addEventListener('blur', hideResults);
 $('q').addEventListener('keydown', function (ev) {
-  if (ev.key === 'Enter') { var hits = runSearch(ev.target.value); if (hits.length) fit(hits, 1.25); else toast('No match'); }
-  if (ev.key === 'Escape') { ev.target.value = ''; runSearch(''); ev.target.blur(); }
+  if (ev.key === 'ArrowDown' && resultIds.length) { ev.preventDefault(); markResult((resultCur + 1) % resultIds.length); }
+  else if (ev.key === 'ArrowUp' && resultIds.length) { ev.preventDefault(); markResult((resultCur + resultIds.length - 1) % resultIds.length); }
+  else if (ev.key === 'Enter') {
+    if (resultCur >= 0) { goTo(resultIds[resultCur]); return; }
+    var hits = runSearch(ev.target.value); if (hits.length) fit(hits, 1.25, true); else toast('No match');
+  }
+  if (ev.key === 'Escape') { ev.target.value = ''; runSearch(''); hideResults(); ev.target.blur(); }
 });
+
+// ------------------------------------------------------------------ CLI runbook (pure: no DOM, no page state)
+/* RUNBOOK:BEGIN - tests/js/test_explorer_docs.js runs exactly this block, so keep it free of page globals */
+var CLI_VENDORS = [['cisco_ios', 'Cisco IOS'], ['cisco_nxos', 'Cisco NX-OS'], ['arista_eos', 'Arista EOS'], ['juniper_junos', 'Juniper Junos'], ['vyos', 'VyOS'], ['huawei', 'Huawei VRP']];
+// {if} = the interface, {rid} = the router ID. Standard OSPF show commands of each platform; check the exact syntax against your software version.
+var CLI_TABLE = {
+  cisco_ios: { nbr: 'show ip ospf neighbor', nbrIf: 'show ip ospf neighbor {if} detail', ifs: 'show ip ospf interface brief', ifOne: 'show ip ospf interface {if}',
+    lsa: 'show ip ospf database router adv-router {rid}', net: 'show ip ospf database network', rib: 'show ip route ospf' },
+  cisco_nxos: { nbr: 'show ip ospf neighbors', nbrIf: 'show ip ospf neighbors {if} detail', ifs: 'show ip ospf interface brief', ifOne: 'show ip ospf interface {if}',
+    lsa: 'show ip ospf database router adv-router {rid}', net: 'show ip ospf database network', rib: 'show ip route ospf' },
+  arista_eos: { nbr: 'show ip ospf neighbor', nbrIf: 'show ip ospf neighbor detail', ifs: 'show ip ospf interface brief', ifOne: 'show ip ospf interface {if}',
+    lsa: 'show ip ospf database router adv-router {rid}', net: 'show ip ospf database network', rib: 'show ip route ospf' },
+  juniper_junos: { nbr: 'show ospf neighbor', nbrIf: 'show ospf neighbor interface {if} extensive', ifs: 'show ospf interface brief', ifOne: 'show ospf interface {if} detail',
+    lsa: 'show ospf database router advertising-router {rid} extensive', net: 'show ospf database network extensive', rib: 'show route protocol ospf' },
+  vyos: { nbr: 'show ip ospf neighbor', nbrIf: 'show ip ospf neighbor detail', ifs: 'show ip ospf interface', ifOne: 'show ip ospf interface {if}',
+    lsa: 'show ip ospf database router adv-router {rid}', net: 'show ip ospf database network', rib: 'show ip route ospf' },
+  huawei: { nbr: 'display ospf peer', nbrIf: 'display ospf peer verbose', ifs: 'display ospf interface', ifOne: 'display ospf interface {if} verbose',
+    lsa: 'display ospf lsdb router {rid}', net: 'display ospf lsdb network', rib: 'display ip routing-table protocol ospf' }
+};
+function cliGuess(deviceType) {
+  var dt = String(deviceType || '').toLowerCase();
+  if (/nx-?os/.test(dt)) return 'cisco_nxos';
+  if (/arista|eos/.test(dt)) return 'arista_eos';
+  if (/junos|juniper/.test(dt)) return 'juniper_junos';
+  if (/vyos|vyatta/.test(dt)) return 'vyos';
+  if (/huawei|vrp/.test(dt)) return 'huawei';
+  if (/cisco|ios/.test(dt)) return 'cisco_ios';
+  return null;
+}
+function cliFill(cmd, o) { return cmd.replace('{if}', (o && o.iface) || '<intf>').replace('{rid}', (o && o.rid) || '<router-id>'); }
+// ctx: {kind:'node', rid, name} | {kind:'network', name} | {kind:'link', ends:[{device, rid, iface}]}  ->  [{title, cmds:[...]}]
+function cliRunbook(vendor, ctx) {
+  var t = CLI_TABLE[vendor] || CLI_TABLE.cisco_ios, blocks = [];
+  if (ctx.kind === 'link') {
+    (ctx.ends || []).forEach(function (e) { blocks.push({ title: 'OSPF link on ' + e.device + (e.iface ? ' (' + e.iface + ')' : ''), cmds: [cliFill(t.nbrIf, e), cliFill(t.ifOne, e)] }); });
+    if (!blocks.length) blocks.push({ title: 'OSPF link', cmds: [cliFill(t.nbrIf), cliFill(t.ifOne)] });
+  } else if (ctx.kind === 'network') {
+    blocks.push({ title: 'Transit network LSAs (' + ctx.name + ')', cmds: [t.net] });
+  } else {
+    blocks.push({ title: 'Adjacencies on ' + ctx.name, cmds: [t.nbr, t.ifs] });
+    blocks.push({ title: 'Router LSA of ' + ctx.rid, cmds: [cliFill(t.lsa, ctx)] });
+    blocks.push({ title: 'Routes learned through OSPF', cmds: [t.rib] });
+  }
+  return blocks;
+}
+/* RUNBOOK:END */
+
+// ------------------------------------------------------------------ documentation spec (pure: no DOM, no page state)
+/* SPEC:BEGIN - tests/js/test_explorer_docs.js runs exactly this block, so keep it free of page globals */
+function mdCell(v) { return String(v == null || v === '' ? '\u2014' : v).replace(/\|/g, '\\|').replace(/\s*[\r\n]+\s*/g, ' '); }
+function specIsBridge(scene, link) {            // true when this link is the only way between its two sides
+  if ((link.parallel || 1) > 1) return false;
+  var adj = {};
+  scene.links.forEach(function (l) {
+    if (l === link || l.status === 'removed' || l.oneWay) return;
+    (adj[l.a] = adj[l.a] || []).push(l.b); (adj[l.b] = adj[l.b] || []).push(l.a);
+  });
+  var seen = {}, queue = [link.a];
+  seen[link.a] = 1;
+  for (var i = 0; i < queue.length; i++) {
+    if (queue[i] === link.b) return false;
+    (adj[queue[i]] || []).forEach(function (n) { if (!seen[n]) { seen[n] = 1; queue.push(n); } });
+  }
+  return true;
+}
+// opts: {vendor: 'Cisco IOS' (shown for every router), time: 'current' | 'previous'}  ->  Markdown text
+function buildSpec(scene, opts) {
+  opts = opts || {};
+  var time = opts.time === 'previous' ? 'previous' : 'current', vendor = opts.vendor || '', byId = {};
+  scene.nodes.forEach(function (n) { byId[n.id] = n; });
+  function shown(x) { return time === 'previous' ? x.status !== 'added' : x.status !== 'removed'; }
+  var ns = scene.nodes.filter(shown);
+  var ls = scene.links.filter(function (l) { return shown(l) && byId[l.a] && byId[l.b] && shown(byId[l.a]) && shown(byId[l.b]); });
+  function cost(e) {
+    if (!e) return '';
+    if (e.old != null) return time === 'previous' ? String(e.old) : e.new + ' (was ' + e.old + ')';
+    return e.metric == null ? '' : String(e.metric);
+  }
+  var routers = ns.filter(function (n) { return n.kind === 'router'; }).length, m = scene.meta || {};
+  var out = ['# Topology specification', '',
+    '- **Snapshot:** ' + (time === 'previous' ? 'previous run (items added since are left out)' : 'current state (items removed since the last run are left out)'),
+    '- **Generated:** ' + mdCell(m.generated) + ' by OSPF Topology Explorer ' + mdCell(m.version),
+    '- **Size:** ' + routers + ' routers, ' + (ns.length - routers) + ' transit networks, ' + ls.length + ' links; areas ' + ((m.areas || []).join(', ') || '\u2014'), '',
+    '## Devices', '',
+    '| Hostname | IP / Router ID | Role / Tier | Vendor | Software version |', '| --- | --- | --- | --- | --- |'];
+  ns.slice().sort(function (a, b) { return a.kind === b.kind ? (a.title < b.title ? -1 : 1) : (a.kind === 'router' ? -1 : 1); }).forEach(function (n) {
+    var role = n.kind === 'router' ? (n.role || 'Router') + (n.areas.length ? ' \u00b7 area ' + n.areas.join(', ') : '')
+      : (n.kind === 'ghost' ? 'Network (no LSA)' : 'Transit network' + (n.dr ? ' (DR ' + n.dr + ')' : ''));
+    out.push('| ' + [n.title, n.kind === 'router' ? n.id : n.prefix, role, n.kind === 'router' ? vendor : '', n.kind === 'router' ? 'not collected' : ''].map(mdCell).join(' | ') + ' |');
+  });
+  out.push('', '## Link interconnect matrix', '',
+    '| Local device | Local interface | Remote device | Remote interface | Cost (local \u2192 remote) | Adjacency | Redundancy |', '| --- | --- | --- | --- | --- | --- | --- |');
+  var rows = [];
+  ls.forEach(function (l) {
+    var red = l.oneWay ? 'One-way (not advertised back)' : (l.parallel || 1) > 1 ? 'Bundle \u00d7' + l.parallel + ' (parallel links)' : specIsBridge(scene, l) ? 'Single path (SPOF)' : 'Redundant (alternate path exists)';
+    [[l.a, l.b], [l.b, l.a]].forEach(function (d) {
+      var local = byId[d[0]], remote = byId[d[1]];
+      if (!local || local.kind !== 'router') return;
+      var le = (l.ends || []).filter(function (e) { return e.from === d[0]; })[0], re = (l.ends || []).filter(function (e) { return e.from === d[1]; })[0];
+      rows.push([local.title, le && le.iface, remote.title, remote.kind === 'router' ? re && re.iface : '', cost(le), l.state, red]);
+    });
+  });
+  rows.sort(function (a, b) { return a[0] === b[0] ? (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0) : (a[0] < b[0] ? -1 : 1); });
+  rows.forEach(function (r) { out.push('| ' + r.map(mdCell).join(' | ') + ' |'); });
+  var bundles = ls.filter(function (l) { return (l.members || []).length > 1; });
+  if (bundles.length) {
+    out.push('', '### Parallel links', '');
+    bundles.forEach(function (l) {
+      out.push('- **' + mdCell(byId[l.a].title) + ' \u21c4 ' + mdCell(byId[l.b].title) + '** \u00d7' + l.members.length + ': ' + l.members.map(function (x) { return 'cost ' + mdCell(x.metric) + (x.ip ? ' (' + x.ip + ')' : ''); }).join(', '));
+    });
+  }
+  var c = scene.diagnostics && scene.diagnostics.changes;
+  if (c && c.baseline) {
+    out.push('', '## Changes since the previous snapshot', '');
+    var added = scene.nodes.filter(function (n) { return n.status === 'added'; }), gone = scene.nodes.filter(function (n) { return n.status === 'removed'; });
+    out.push('- Added devices: ' + (added.map(function (n) { return n.title; }).join(', ') || 'none'));
+    out.push('- Removed devices: ' + (gone.map(function (n) { return n.title; }).join(', ') || 'none'));
+    out.push('- Links: +' + (c.addedLinks || 0) + ' / \u2212' + (c.removedLinks || 0) + '; cost changes: ' + (c.metricChanges || 0));
+  }
+  return out.join('\n') + '\n';
+}
+/* SPEC:END */
 
 // ------------------------------------------------------------------ sidebar
 function card(cls, icon, title, sub, onclick) {
@@ -1002,7 +1696,7 @@ function buildFindings() {
   Object.keys(groups).sort(function (a, b) { return Math.min.apply(null, groups[a].map(function (f) { return { critical: 0, warning: 1, info: 2 }[f.severity]; })) - Math.min.apply(null, groups[b].map(function (f) { return { critical: 0, warning: 1, info: 2 }[f.severity]; })) || (a < b ? -1 : 1); }).forEach(function (kind) {
     var det = document.createElement('details'); det.className = 'group';
     var worst = groups[kind].some(function (f) { return f.severity === 'critical'; }) ? 'critical' : groups[kind].some(function (f) { return f.severity === 'warning'; }) ? 'warning' : 'info';
-    det.innerHTML = '<summary><span class="dot ' + worst + '" style="margin:0"></span><span>' + esc(KIND_TITLE[kind] || kind) + '</span><span class="n">' + groups[kind].length + '</span></summary>';
+    det.innerHTML = '<summary><span>' + esc(KIND_TITLE[kind] || kind) + '</span>' + pill(worst === 'critical' ? 'down' : worst === 'warning' ? 'warn' : 'info', worst.toUpperCase()) + '<span class="n">' + groups[kind].length + '</span></summary>';
     groups[kind].forEach(function (f) {
       var b = document.createElement('button'); b.className = 'row'; b.title = f.hint || '';
       b.innerHTML = '<span class="dot ' + f.severity + '"></span><span>' + esc(f.message) + (f.hint ? '<br><span style="color:var(--muted)">' + esc(f.hint) + '</span>' : '') + '</span>';
@@ -1019,7 +1713,8 @@ function buildLegend() {
     ['<i style="border-color:' + C.added + '"></i>', 'New since last run'], ['<i class="dash" style="border-color:' + C.removed + '"></i>', 'Removed since last run'],
     ['<i style="border-color:' + C.changed + '"></i>', 'Cost changed'], ['<i style="border-color:' + C.path + ';border-top-width:5px"></i>', 'Traced path'],
     ['<b style="background:' + C.router + '"></b>', 'Router (gold edge = ABR)'], ['<b style="background:' + C.net + ';clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)"></b>', 'Transit network (DR below)'],
-    ['<b style="background:' + C.ghostFill + ';clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)"></b>', 'Network with no LSA']];
+    ['<b style="background:' + C.ghostFill + ';clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)"></b>', 'Network with no LSA'],
+    ['<i style="border-color:' + C.simBad + '"></i>', 'Blast radius: cut off from the core'], ['<i class="dash" style="border-color:' + C.simWarn + '"></i>', 'Blast radius: single-homed (SPOF)'], ['<i style="border-color:' + C.simBlue + '"></i>', 'Blast radius: rerouted']];
   $('legend').innerHTML = rows.map(function (r) { return '<span>' + r[0] + '</span><span>' + r[1] + '</span>'; }).join('');
 }
 function buildHeader() {
@@ -1031,6 +1726,11 @@ function buildHeader() {
     l.firstChild.addEventListener('change', function (ev) { state.hiddenAreas[a] = !ev.target.checked; render(); });
     list.appendChild(l);
   });
+  var d = SCENE.diagnostics, fc = { critical: 0, warning: 0, info: 0 };
+  SCENE.findings.forEach(function (f) { fc[f.severity] = (fc[f.severity] || 0) + 1; });
+  var crit = fc.critical + d.adjacency.length + d.suspect.length + (d.split ? 1 : 0), warnN = fc.warning + d.oneWay.length + d.stale.length;
+  $('metrics').innerHTML = [['Routers', m.routers], ['Transit', m.networks], ['Links', m.links], ['Areas', m.areas.length]].map(function (x) { return '<div class="metric"><b class="num">' + x[1] + '</b><span>' + x[0] + '</span></div>'; }).join('');
+  $('mpills').innerHTML = (crit ? pill('down', crit + ' CRITICAL') : '') + (warnN ? pill('warn', warnN + ' WARNING') : '') + (!crit && !warnN ? pill('up', 'HEALTHY') : '') + (fc.info ? pill('info', fc.info + ' INFO') : '');
 }
 
 // ------------------------------------------------------------------ toolbar
@@ -1052,6 +1752,8 @@ $('f-ifaces').onchange = function (e) { state.show.ifaces = e.target.checked; pl
 $('f-areas').onchange = function (e) { state.show.areas = e.target.checked; render(); };
 $('f-bundle').onchange = function (e) { state.bundle.on = e.target.checked; state.bundle.expanded = {}; render(); };
 $('f-bundlemin').onchange = function (e) { state.bundle.min = Math.max(2, parseInt(e.target.value, 10) || 6); state.bundle.expanded = {}; render(); };
+$('f-group-stubs').onchange = function (e) { state.stubs.on = e.target.checked; state.stubs.expanded = {}; render(); };
+$('f-ego').onchange = function (e) { state.ego = e.target.checked; applyDim(); };
 function download(name, text, type) {
   var a = document.createElement('a'), url = URL.createObjectURL(new Blob([text], { type: type }));
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 500);
@@ -1082,16 +1784,65 @@ $('m-svg').onclick = function () {
   clone.insertBefore(bg, clone.firstChild);
   download('ospf-topology.svg', '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone), 'image/svg+xml');
 };
+// ------------------------------------------------------------------ documentation export: clean vector SVG + TOPOLOGY_SPEC.md
+function docTime() { return SCENE.diagnostics.changes.baseline && state.time === 'overlay' ? 'current' : state.time; }
+function docVendor() { var dt = SCENE.meta.device_type; return dt ? (vendorName(cliGuess(dt)) || dt) : ''; }
+function specText() { return buildSpec(SCENE, { vendor: docVendor(), time: docTime() }); }
+// The picture as it would sit in an RFC, Confluence page or wiki: light colours on white whatever the screen theme,
+// no hit areas, highlights, selection or simulation marks, every cost and interface name, and a viewBox so it scales
+// to any resolution (it is vector: there is nothing to blur).
+function cleanSvgText() {
+  var keep = { C: C, time: state.time, sel: state.sel, hover: state.hover, focus: state.focus, matches: state.matches, ifaces: state.show.ifaces, costs: state.show.costs, view: state.view, sim: sim.active };
+  var text = '';
+  C = PAL.light; state.time = docTime(); state.sel = state.hover = state.focus = null; state.matches = null;
+  state.show.ifaces = true; state.show.costs = true; state.view = { x: 0, y: 0, k: 1 }; sim.active = false;
+  try {
+    render();
+    var b = bounds(), pad = 40, w = Math.round(b.x1 - b.x0 + 2 * pad), h = Math.round(b.y1 - b.y0 + 2 * pad), clone = canvas.cloneNode(true);
+    ['simfx', 'simtop', 'diffovl'].forEach(function (id) { var g = clone.querySelector('#' + id); if (g) g.textContent = ''; });
+    Array.prototype.forEach.call(clone.querySelectorAll('line.hit, [display="none"]'), function (e) { if (e.parentNode) e.parentNode.removeChild(e); });
+    Array.prototype.forEach.call(clone.querySelectorAll('*'), function (e) {
+      ['data-node', 'data-link', 'data-area', 'class', 'cursor', 'pointer-events', 'opacity'].forEach(function (a) { if (a !== 'opacity' || e.getAttribute(a) === '1') e.removeAttribute(a); });
+    });
+    clone.querySelector('#vp').removeAttribute('transform');
+    ['style', 'tabindex', 'class'].forEach(function (a) { clone.removeAttribute(a); });
+    clone.setAttribute('viewBox', [b.x0 - pad, b.y0 - pad, b.x1 - b.x0 + 2 * pad, b.y1 - b.y0 + 2 * pad].join(' '));
+    clone.setAttribute('width', w); clone.setAttribute('height', h);
+    clone.setAttribute('role', 'img'); clone.setAttribute('aria-label', 'OSPF topology: ' + SCENE.meta.routers + ' routers, ' + SCENE.meta.links + ' links');
+    var head = document.createDocumentFragment();
+    var t = document.createElementNS(NS, 'title'); t.textContent = 'OSPF topology (' + docTime() + ' state)'; head.appendChild(t);
+    var st = document.createElementNS(NS, 'style'); st.textContent = 'text{font-variant-numeric:tabular-nums}'; head.appendChild(st);
+    var bg = document.createElementNS(NS, 'rect');
+    bg.setAttribute('x', b.x0 - pad); bg.setAttribute('y', b.y0 - pad); bg.setAttribute('width', b.x1 - b.x0 + 2 * pad); bg.setAttribute('height', b.y1 - b.y0 + 2 * pad); bg.setAttribute('fill', '#ffffff');
+    head.appendChild(bg);
+    clone.insertBefore(head, clone.firstChild);
+    text = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
+  } finally {
+    C = keep.C; state.time = keep.time; state.sel = keep.sel; state.hover = keep.hover; state.focus = keep.focus; state.matches = keep.matches;
+    state.show.ifaces = keep.ifaces; state.show.costs = keep.costs; state.view = keep.view; sim.active = keep.sim;
+    render();
+  }
+  return text;
+}
+$('m-docsvg').onclick = function () { download('ospf-topology-clean.svg', cleanSvgText(), 'image/svg+xml'); };
+$('m-docmd').onclick = function () { download('TOPOLOGY_SPEC.md', specText(), 'text/markdown'); };
+$('m-docs').onclick = function () {
+  download('ospf-topology-clean.svg', cleanSvgText(), 'image/svg+xml');
+  setTimeout(function () { download('TOPOLOGY_SPEC.md', specText(), 'text/markdown'); }, 450);
+  toast('Documentation bundle: ospf-topology-clean.svg + TOPOLOGY_SPEC.md');
+};
 document.addEventListener('keydown', function (ev) {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   var typing = /INPUT|TEXTAREA|SELECT/.test((ev.target.tagName || ''));
   if (ev.key === '/' && !typing) { ev.preventDefault(); $('q').focus(); }
   else if (typing) return;
-  else if (ev.key === 'Escape') { closeSimPopover(); clearSelection(); $('p-filter').classList.add('hidden'); $('p-more').classList.add('hidden'); }
-  else if (ev.key === 'f') fit();
+  else if (ev.key === 'Escape') { closeSimPopover(); hideResults(); clearSelection(); $('p-filter').classList.add('hidden'); $('p-more').classList.add('hidden'); }
+  else if (ev.key === 'f' || ev.key === 'F') fit();
+  else if (ev.key === 's' || ev.key === 'S') $('b-sim').click();
   else if (ev.key === '+' || ev.key === '=') $('b-zin').click();
   else if (ev.key === '-') $('b-zout').click();
 });
-window.addEventListener('resize', function () { afterView(); });
+window.addEventListener('resize', function () { mmSetup(); afterView(); });
 
 // ------------------------------------------------------------------ theme (auto / light / dark)
 var THEME_KEY = 'ospf-explorer:theme';
@@ -1127,7 +1878,8 @@ if (media) {
 var GM = makeGraphModel(SCENE);
 simSetModel(GM);
 var sim = { active: false, disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set(), sourceNode: null, targetNode: null };
-var simRes = null, simMs = 0, simDrain = null;
+var simRes = null, simMs = 0, simDrain = null, simBlastRes = null;
+function blastState(id) { var s = simBlastRes && simBlastRes.state[id]; return s === 'stranded' ? 'isolated' : (s || ''); }
 var gSimFx = $('simfx'), gSimTop = $('simtop'), popEl = $('sim-pop'), popAt = null;
 
 function simTitle(id) { return nodes[id] ? nodes[id].title : id; }
@@ -1169,7 +1921,9 @@ function simReset() {
 function simSetActive(on) {
   on = !!on;
   if (on === sim.active) return;
+  if (on && state.time !== 'current' && SCENE.diagnostics.changes.baseline) { state.time = 'current'; render(); }
   sim.active = on;
+  syncDiffBar();
   if (!on) { sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); sim.sourceNode = sim.targetNode = null; simDrain = null; closeSimPopover(); }
   $('b-sim').classList.toggle('on', on);
   $('sim-bar').classList.toggle('on', on);
@@ -1183,7 +1937,9 @@ function simRefresh() {
   var t0 = window.performance && performance.now ? performance.now() : Date.now();
   simRes = sim.active ? simAnalyze(GM, sim) : null;
   simMs = (window.performance && performance.now ? performance.now() : Date.now()) - t0;
+  simBlastRes = sim.active ? simBlast(GM, sim, simBlastAnchors(GM, sim).ids) : null;
   renderSimBar(); renderSimSide();
+  $('sel').style.top = (sim.active ? $('sim-bar').offsetHeight + 62 : 60) + 'px';   // keep the inspector below the simulation bar
   applyDim(); placeLabels();           // placeLabels ends by redrawing the simulation overlay
   if (popAt) openSimPopover();         // keep an open popover in step with what just changed
 }
@@ -1229,6 +1985,14 @@ function renderSimBar() {
   }
   if (r.isolated.length) box.appendChild(simChip('bad', '\u26a0 ' + simPlural(r.isolated.length, 'node') + ' isolated from A', r.isolated.map(simTitle).join(', ') + ' - click to find', function () { focusOn('Isolated by the simulation', r.isolated, []); }));
   if (r.sourceDown) box.appendChild(simChip('bad', 'Source A is down'));
+  var bl = simBlastRes;
+  if (bl && bl.active) {
+    var red = bl.isolated.concat(bl.stranded), core = bl.anchors.map(simTitle).join(', ');
+    box.appendChild(simChip(red.length ? 'bad' : 'ok', '\u25cf ' + red.length + ' cut off', red.length ? red.map(simTitle).join(', ') + ' - click to find' : 'No router loses its path to the core', red.length ? function () { focusOn('Blast radius: cut off from the core', red, []); } : null));
+    box.appendChild(simChip(bl.spof.length ? 'warn' : 'dim', '\u25b2 ' + bl.spof.length + ' lose redundancy', bl.spof.length ? 'One failure from isolation (SPOF): ' + bl.spof.map(simTitle).join(', ') : 'No router becomes single-homed', bl.spof.length ? function () { focusOn('Blast radius: single-homed (SPOF)', bl.spof, []); } : null));
+    box.appendChild(simChip(bl.rerouted.length ? 'blue' : 'dim', '\u21c4 ' + bl.rerouted.length + ' rerouted', bl.rerouted.length ? 'Longer path now: ' + bl.rerouted.map(function (id) { return simTitle(id) + ' +' + bl.delta[id]; }).join(', ') : 'No router pays a higher cost', bl.rerouted.length ? function () { focusOn('Blast radius: rerouted', bl.rerouted, bl.newLinks); } : null));
+    box.appendChild(simChip('dim', 'Core: ' + core + ' (' + simBlastAnchors(GM, sim).why + ')', 'The blast radius is measured against this core: Source A when picked, else the ABRs, else the best-connected router.'));
+  }
   box.appendChild(simChip('dim', 'SPF ' + (simMs < 0.1 ? '<0.1' : simMs.toFixed(1)) + ' ms', 'Client-side Dijkstra, recomputed on every change'));
   // the list of changes, each one a chip that undoes itself when clicked
   var any = false;
@@ -1275,7 +2039,7 @@ function simPill(parent, x, y, deg, text, edge, cls) {
   if (deg > 90 || deg < -90) deg += 180;
   var g = svg('g', { transform: 'translate(' + x + ',' + y + ') rotate(' + deg + ')', 'class': cls || null }, parent);
   svg('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: h / 2, fill: C.pillBg, 'fill-opacity': .96, stroke: edge, 'stroke-width': 1.6 / k }, g);
-  var t = svg('text', { x: 0, y: size * .36, 'text-anchor': 'middle', 'font-size': size, 'font-weight': 700, 'font-family': 'sans-serif', fill: edge }, g);
+  var t = svg('text', { x: 0, y: size * .36, 'text-anchor': 'middle', 'font-size': size, 'font-weight': 700, 'font-family': MONO, fill: edge }, g);
   t.textContent = text;
   return g;
 }
@@ -1340,7 +2104,7 @@ function drawSimFx() {
   }
   function badge(g, x, y, text, fill, ring) {
     svg('circle', { cx: x, cy: y, r: 11, fill: fill, stroke: ring, 'stroke-width': 2 }, g);
-    var t = svg('text', { x: x, y: y + 4.5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 800, 'font-family': 'sans-serif', fill: '#ffffff' }, g);
+    var t = svg('text', { x: x, y: y + 4.5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 800, 'font-family': FONT, fill: '#ffffff' }, g);
     t.textContent = text;
   }
   r.isolated.forEach(function (id) {
@@ -1360,6 +2124,32 @@ function drawSimFx() {
   [[sim.sourceNode, 'A', C.simPath], [sim.targetNode, 'B', C.simWarn]].forEach(function (x) {
     if (x[0]) around(x[0], function (g, hw, hh) { badge(g, -hw - 2, -hh - 2, x[1], C.dark, x[2]); });
   });
+  // 5. blast radius from the core: pulse where something was taken out, blue = the new way round, rings on what is hit
+  var bl = simBlastRes;
+  if (bl && bl.active) {
+    var pulse = function (cx, cy, rr, col) {
+      ['', ' b'].forEach(function (c) { svg('circle', { cx: cx, cy: cy, r: rr, fill: 'none', stroke: col, 'stroke-width': 3, 'class': 'sim-pulse' + c }, gSimFx); });
+    };
+    sim.disabledNodes.forEach(function (id) { var p = pos[id], n = mnode[id]; if (p && n) pulse(p.x, p.y, Math.max(n.w, n.h) * .7 + 10, C.simBad); });
+    sim.drainedNodes.forEach(function (id) { var p = pos[id], n = mnode[id]; if (p && n) pulse(p.x, p.y, Math.max(n.w, n.h) * .7 + 10, C.simWarn); });
+    sim.disabledLinks.forEach(function (id) { var l = links[id]; if (l && l.geo) pulse((l.geo.pa.x + l.geo.pb.x) / 2, (l.geo.pa.y + l.geo.pb.y) / 2, 26, C.simBad); });
+    bl.newLinks.forEach(function (lid) {
+      var l = links[lid];
+      if (!l || !l.geo || !visible[lid]) return;
+      simLine(gSimFx, [l.geo.pa, l.geo.pb], { stroke: C.simBlue, 'stroke-width': 13, 'stroke-opacity': .2 });
+      simLine(gSimFx, [l.geo.pa, l.geo.pb], { stroke: C.simBlue, 'stroke-width': 4.5, 'stroke-dasharray': '10 7' }, 'sim-blue');
+    });
+    var words = k >= .35;
+    Object.keys(bl.state).forEach(function (id) {
+      if (r.isolated.indexOf(id) >= 0) return;               // already ringed as cut off from A
+      var s = bl.state[id];
+      around(id, function (g, hw, hh) {
+        var col = s === 'spof' ? C.simWarn : s === 'rerouted' ? C.simBlue : C.simBad;
+        svg('rect', { x: -hw - 7, y: -hh - 7, width: hw * 2 + 14, height: hh * 2 + 14, rx: 14, fill: 'none', stroke: col, 'stroke-width': s === 'rerouted' ? 2.5 : 3.5, 'stroke-dasharray': s === 'spof' ? '7 5' : null }, g);
+        if (words) simPill(g, 0, -hh - 16, 0, s === 'isolated' ? 'ISOLATED' : s === 'stranded' ? 'DRAIN-ONLY' : s === 'spof' ? '\u25b2 SPOF' : '+' + bl.delta[id] + ' cost', col);
+      });
+    });
+  }
 }
 
 // ---- popovers (click a link or a router while simulating)
@@ -1445,10 +2235,11 @@ function nodePopover(n) {
 // ------------------------------------------------------------------ go
 resetPositions(true);
 applyTheme(savedTheme() || SCENE.meta.theme || 'auto', false);
-buildHeader(); buildDiagnostics(); buildFindings(); buildLegend();
+buildHeader(); buildDiagnostics(); buildFindings(); buildLegend(); buildDiffBar();
+mmSetup();
 render(); fit();
 ready = true;
-window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
+window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, setTime: setTime, goTo: goTo, afterView: afterView, drawMinimap: drawMinimap, cleanSvg: cleanSvgText, spec: specText, buildSpec: buildSpec, cliRunbook: cliRunbook, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
 })();
 </script>
 </body>

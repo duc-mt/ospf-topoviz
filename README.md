@@ -286,15 +286,23 @@ python main.py --trace 10.136.4.9                          # the traced path is 
 |---|---|
 | Sidebar *Diagnostics & Warnings* | Topology split, one-way links, stale routers, adjacency problems, suspect-run reasons, changes since the last run. **Click an entry and its routers/links are highlighted and centred** |
 | Cross-check findings | Neighbour and routing-table findings grouped by kind, severity chips to filter; the hint (likely cause) sits under each message. Click a finding to find its routers on the picture |
-| Hover | A link shows both directions: interface, IP, cost, adjacency state (`FULL (Green)`, ...); a node shows areas, LSA age, advertised prefixes, findings about it |
+| Hover | A link shows both directions: interface, IP, cost, adjacency state (the `● UP` / `▲ DEGRADED` / `✖ DOWN` pill and the raw state); a node shows areas, LSA age, advertised prefixes, findings about it |
 | Click | A node: highlights it and its neighbours and dims the rest; a link: its details. `Esc` clears |
-| Labels | Costs are drawn as small pills with collision culling (the text keeps its screen size while you zoom); interface names appear on hover, on selection and when zoomed in |
+| Labels | Costs are drawn as small pills with collision culling (the text keeps its screen size while you zoom); interface names appear on hover, on selection and above zoom 1.20; below zoom 0.50 only names and backbone links stay |
 | Drag a node | Positions are saved **in the browser, per node ID**, and restored on the next run. *Reset Layout* forgets them. *Export / Import layout* moves them between machines (⚙) |
 | Search | Router ID, name, prefix (including prefixes a router advertises) or area; `Enter` zooms to the matches; `/` focuses the box |
 | Filter | One-way links on/off, cost and interface labels, area boxes, and per-area visibility |
 | Bundle | *Bundle leaf routers of a segment, from N*: routers whose only link is to one segment collapse into a single `×N routers` node on a thick link; click it, or search for one of them, to expand |
 | View | Wheel zoom, drag the background to pan, `+` `-` `f` (fit), full screen, *Download SVG* of the current picture |
 | Theme | The ☀️/🌙/◐ button in the header cycles **auto** (follows the operating system, live), **light** and **dark**; the choice is kept in the browser (`ospf-explorer:theme`) and the whole picture, badges and sidebar are recoloured without losing your selection or zoom. `--theme` sets where a page without a saved choice starts |
+| Snapshot | The bar at the bottom switches between **Current State**, **Previous State** and **Diff Overlay**: the network as it is, as it was at the last run, or both with new items green, removed ones red and dashed, changed costs orange (needs a previous run; the comparison is the one the sidebar already reports) |
+| Simulate | `S` or *Simulate*: fail a router or a link, change a cost, or drain a router (`max-metric router-lsa`). The **blast radius** is measured from the core (Source A if you picked one, else the ABRs, else the best-connected router): **red** cut off (or only reachable through a drained router), **amber** still connected but now one failure from being cut off, **blue** rerouted over a costlier path, drawn as moving dashes |
+| Focus mode, minimap | Hover or select a router and its 1-hop and 2-hop neighbourhood stays lit (2-hop softer) while the rest dims to 15 %; Filter turns it off. The 160 x 100 radar at the bottom right shows the whole picture and the window onto it: click or drag to move |
+| Parallel links | Several links between the same two routers are drawn as one line with a `[2x]` badge and listed one by one in the inspector. Links are told apart by their interface address, so two links without one count as one |
+| Stub networks | Filter > *Group single-homed stub networks*: networks with nothing else on them fold into a `+N Stubs` counter on their router; click it to unfold |
+| Inspector | Click a router, network or link: tabs **Overview**, **Interfaces & Peers** (filterable) and **CLI Diagnostics**: copy-ready read-only `show` commands for Cisco IOS / NX-OS, Arista EOS, Junos, VyOS and Huawei. The platform is taken from the run's device type, or pick it in the tab; check the syntax against your software version |
+| Documentation | ⚙ > *Export Documentation Bundle*: a clean vector SVG (light colours on white, no controls, any resolution) and `TOPOLOGY_SPEC.md` (device table, link matrix with interfaces, costs and redundancy). *Software version* is not collected by the OSPF poll and says so |
+| Keys | `/` search, `F` fit, `S` simulate, `Esc` deselect |
 
 The explorer needs a current browser; the layout itself is computed by Python, so the picture is reproducible. The PNG/SVG/PDF output and `--layout` (the Graphviz engine) keep their layout; `--theme dark` redraws them in dark colours (`python main.py --output topo.png --theme dark`).
 
@@ -520,6 +528,13 @@ For bot provisioning, forum topics, cooldown damping, and proxy configuration, r
 ```bash
 pip install pytest
 pytest
+```
+
+The what-if engine (blast radius included) and the CLI runbook / `TOPOLOGY_SPEC.md` generator need only node:
+
+```bash
+node tests/js/test_simulation.js
+node tests/js/test_explorer_docs.js
 ```
 
 The explorer page itself (hover, select, drag and save, search, filters, bundles, export) is exercised in jsdom. Those tests are skipped unless node is installed; to run them:
