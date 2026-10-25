@@ -250,7 +250,9 @@ def test_dispatch_alerts_dict_warning_finding() -> None:
     call_args = mock_notifier.send_alert.call_args
     assert call_args.kwargs.get("title") == "OSPF Topology Anomaly Detected"
     assert call_args.kwargs.get("level") == "warning"
-    assert "Neighbor 10.255.255.2 stuck in Loading state" in call_args.kwargs.get("message")
+    assert "Neighbor 10.255.255.2 stuck in Loading state" in call_args.kwargs.get(
+        "message"
+    )
 
 
 def test_dispatch_alerts_dict_critical_finding() -> None:
@@ -294,3 +296,41 @@ def test_dispatch_alerts_dict_critical_finding() -> None:
     assert call_args.kwargs.get("level") == "critical"
     assert "Adjacency down with 10.255.255.3" in call_args.kwargs.get("message")
 
+
+def test_dispatch_alerts_in_sync_with_digraph() -> None:
+    import networkx as nx
+
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="info",
+    )
+
+    diff = TopologyDiff(
+        added_nodes=set(),
+        removed_nodes=set(),
+        added_edges=set(),
+        removed_edges=set(),
+        findings=[],
+        baseline_updated=True,
+    )
+
+    dg = nx.DiGraph()
+    dg.add_node("1.1.1.1")
+    dg.add_node("2.2.2.2")
+    dg.add_edge("1.1.1.1", "2.2.2.2")
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=dg,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology In Sync"
+    assert call_args.kwargs.get("level") == "info"
+    assert "2 router(s), 1 link(s) active" in call_args.kwargs.get("message")

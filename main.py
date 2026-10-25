@@ -733,7 +733,7 @@ def _finding_text(finding: Any) -> str:
 def dispatch_alerts(
     settings: dict,
     diff: TopologyDiff,
-    graph: dict,
+    graph: Any,
     image_path: str | None = None,
     notifier: TelegramNotifier | None = None,
 ) -> None:
@@ -756,12 +756,8 @@ def dispatch_alerts(
         changes.append(f"Removed links: {len(diff.removed_edges)}")
 
     findings = diff.findings or []
-    critical_findings = [
-        f for f in findings if _finding_severity(f) == "critical"
-    ]
-    warning_findings = [
-        f for f in findings if _finding_severity(f) == "warning"
-    ]
+    critical_findings = [f for f in findings if _finding_severity(f) == "critical"]
+    warning_findings = [f for f in findings if _finding_severity(f) == "warning"]
     has_anomalies = bool(critical_findings or warning_findings)
 
     # Only send alert if there are actionable anomalies, state diffs, or unverified links
@@ -772,7 +768,9 @@ def dispatch_alerts(
             else "warning"
         )
         title = (
-            "OSPF Topology Anomaly Detected" if has_anomalies else "OSPF Topology Changed"
+            "OSPF Topology Anomaly Detected"
+            if has_anomalies
+            else "OSPF Topology Changed"
         )
 
         summary_lines = []
@@ -804,8 +802,15 @@ def dispatch_alerts(
         )
     else:
         # Topology in sync: dispatch info heartbeat (delivered if min_severity="info")
-        node_count = len(graph.get("nodes", []))
-        edge_count = len(graph.get("edges", []))
+        if hasattr(graph, "number_of_nodes") and hasattr(graph, "number_of_edges"):
+            node_count = graph.number_of_nodes()
+            edge_count = graph.number_of_edges()
+        elif isinstance(graph, dict):
+            node_count = len(graph.get("nodes", []))
+            edge_count = len(graph.get("edges", []))
+        else:
+            node_count = len(getattr(graph, "nodes", []))
+            edge_count = len(getattr(graph, "edges", []))
         notifier.send_alert(
             title="OSPF Topology In Sync",
             message=(
