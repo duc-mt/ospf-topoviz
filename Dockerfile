@@ -11,9 +11,10 @@
 # user. Any other mode works too: `docker run ... ospf-topoviz --replay samples/vyos --dry-run`.
 
 ARG PYTHON_VERSION=3.12
+ARG PYTHON_BASE_IMAGE=python:${PYTHON_VERSION}-slim-bookworm
 
 # ------------------------------------------------------------------------------------------------ builder
-FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+FROM ${PYTHON_BASE_IMAGE} AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -35,7 +36,7 @@ COPY requirements.txt requirements.lock ./
 RUN pip install --upgrade pip && pip install -r "${REQUIREMENTS}"
 
 # ------------------------------------------------------------------------------------------------ runtime
-FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 LABEL org.opencontainers.image.title="OSPF TopoViz" \
       org.opencontainers.image.description="OSPF topology visualizer, history and explorer web server" \
@@ -71,8 +72,6 @@ RUN mkdir -p /app/config /app/data /app/output \
 
 USER appuser
 
-# State lives outside the image: settings (with credentials), the topology baseline + history, the diagrams.
-VOLUME ["/app/config", "/app/data", "/app/output"]
 EXPOSE 8080
 
 # /api/status answers 200 whenever the server is up, even before the first poll. The port comes from the
