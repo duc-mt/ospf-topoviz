@@ -29,13 +29,20 @@ from src.correlation import trace_prefix
 from src.config import (
     SEED_MODES,
     ConfigError,
+    ServerOptions,
     load_settings,
     maxage_lsa_age,
     parse_process_id,
     parse_seed_hosts,
     stale_lsa_age,
 )
-from src.graph_engine import GraphEngine, GuardConfig, TopologyDiff
+from src.graph_engine import (
+    GraphEngine,
+    GuardConfig,
+    HistoryConfig,
+    TopologyDiff,
+    parse_area_id,
+)
 from src.notifier import TelegramConfig, TelegramNotifier
 from src.parser import (
     DEFAULT_MAXAGE_IGNORE_AGE,
@@ -46,7 +53,9 @@ from src.parser import (
 from src.poller import (
     FilePoller,
     MultiDevicePoller,
+    PollBusyError,
     PollerError,
+    PollLock,
     PollResult,
     RawLSDB,
     SeedResult,
@@ -129,6 +138,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--trace-from",
         metavar="ROUTER_ID",
         help="router ID to trace from (default: the first polled router that has a routing table)",
+    )
+    ap.add_argument(
+        "--area",
+        metavar="AREA_ID",
+        help="draw only this OSPF area (0, 1 or 0.0.0.1): its routers and transit networks, with the area "
+        "border routers shown as the edge of the view. Only the diagram changes; the baseline, the "
+        "history and the explorer page keep the whole network",
+    )
+    ap.add_argument(
+        "--serve",
+        action="store_true",
+        help="run the embedded web server instead of a single poll: the explorer page, the topology history "
+        "(time travel), on-demand SPF traces and POST /api/poll. Settings: the server: block of the "
+        "settings file, or OSPF_MONITOR_HOST / OSPF_MONITOR_PORT / OSPF_MONITOR_POLL_INTERVAL",
+    )
+    ap.add_argument(
+        "--port",
+        type=int,
+        metavar="PORT",
+        help="port of the web server (default: 8080, or OSPF_MONITOR_PORT, or server.port in the settings file)",
     )
     ap.add_argument(
         "--fail-on-findings",
@@ -232,10 +261,25 @@ def print_summary(
             f"being flushed from the database: {names}"
         )
     abrs = [n for n, a in graph.nodes(data=True) if a.get("abr")]
-    asbrs = [n for n, a in graph.nodes(data=True) if a.get("asbr")]
+    asbrs = [n for n, a in graph.nodes(data=True) if a.get("asbr") or a.get("is_asbr")]
     if abrs or asbrs:
         print(
             f" Roles     : {len(abrs)} ABR ({', '.join(abrs) or '-'}), {len(asbrs)} ASBR ({', '.join(asbrs) or '-'})"
+        )
+    external, nssa = (
+        graph.graph.get("external_lsas") or 0,
+        graph.graph.get("nssa_lsas") or 0,
+    )
+    if external or nssa:
+        originators = sum(1 for _n, a in graph.nodes(data=True) if a.get("externals"))
+        loose = graph.graph.get("external_unattached") or []
+        print(
+            f" External  : {external} Type 5 + {nssa} Type 7 LSA(s) from {originators} ASBR(s)"
+            + (
+                f"; {len(loose)} originator(s) not in the topology: {', '.join(loose)}"
+                if loose
+                else ""
+            )
         )
 
     # 1. Topology comparison summary table
@@ -317,6 +361,12 @@ def save_raw(raw: RawLSDB, directory: Path) -> None:
             (directory / FilePoller.ROUTES_FILE).write_text(
                 raw.routes, encoding="utf-8"
             )
+        if raw.external:
+            (directory / FilePoller.EXTERNAL_FILE).write_text(
+                raw.external, encoding="utf-8"
+            )
+        if raw.nssa:
+            (directory / FilePoller.NSSA_FILE).write_text(raw.nssa, encoding="utf-8")
     except OSError as exc:
         raise TrackerError(
             f"Could not write raw capture to {directory}: {exc}"
@@ -373,7 +423,7 @@ def make_ingest(parsers: ParserPool):
 
     def ingest(seed, raw: RawLSDB) -> SeedIngest:
         parser = parsers.get(seed.device_type, seed.process_id)
-        lsdb = parser.parse_lsdb(raw.router, raw.network)
+        lsdb = parser.parse_lsdb(raw.router, raw.network, raw.external, raw.nssa)
         neighbors = routes = None
         if raw.neighbors.strip():
             try:
@@ -550,6 +600,30 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
         )
         return EXIT_ERROR
 
+    if args.serve:
+        return serve(args, notifier)
+
+    # One poll at a time: the CLI, a cron job and the web server share data/.poll.lock. A dry run writes no
+    # state, so it needs no lock.
+    lock = None if args.dry_run else PollLock(DATA_DIR / ".poll.lock")
+    if lock is not None and not lock.acquire():
+        raise PollBusyError(
+            f"Another poll is already running (lock {lock.path}); this run was skipped"
+        )
+    try:
+        return _run_pipeline(args, notifier)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _run_pipeline(
+    args: argparse.Namespace, notifier: TelegramNotifier | None = None
+) -> int:
+    """Poll, parse, build the graph, report and draw once (``run`` holds the poll lock around this)."""
+    area = (
+        parse_area_id(args.area) if args.area else None
+    )  # fail before any SSH traffic
     if args.trace:
         try:  # fail before any SSH traffic
             ipaddress.ip_network(
@@ -579,7 +653,9 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             seed.device_type, seed.process_id
         )  # e.g. Genie missing -> fail now, not after polling
     engine = GraphEngine(
-        data_dir=DATA_DIR, guard=GuardConfig.from_settings(settings.get("guard"))
+        data_dir=DATA_DIR,
+        guard=GuardConfig.from_settings(settings.get("guard")),
+        history=HistoryConfig.from_settings(settings.get("history")),
     )
     options = VisualOptions.from_settings(settings.get("visualization"))
     if args.theme:
@@ -620,7 +696,10 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     lsdb = merge_lsdbs(lsdbs) if len(lsdbs) > 1 else lsdbs[0]
     details = [s.parsed.detail for s in answered if s.parsed.detail is not None]
 
-    metadata = {"device_type": ", ".join(sorted({s.device_type for s in answered}))}
+    metadata = {
+        "device_type": ", ".join(sorted({s.device_type for s in answered})),
+        "scope": scope,  # lets the web server name this network when it redraws a past run
+    }
     if live:
         metadata["seed_mode"] = result.mode
         metadata["sources"] = [
@@ -668,15 +747,28 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     )  # shown even if rendering fails
     if args.dry_run:
         print("\n [DRY RUN] Topology diffed — no state files written.\n")
-    # 4. Visualize
+    elif engine.last_run_id:
+        print(f"\n History   : run {engine.last_run_id} recorded")
+    # 4. Visualize. --area narrows the diagram only; the state, the history and the explorer page keep it all.
+    view_graph, view_diff = graph, diff
+    if area:
+        view_graph = engine.filter_by_area(graph, area)
+        view_diff = engine.filter_diff_by_area(diff, area, view_graph)
+        routers = sum(
+            1 for _n, a in view_graph.nodes(data=True) if a.get("type") == "router"
+        )
+        print(
+            f"\n Area view : {area} ({routers} router(s), {view_graph.number_of_nodes() - routers} "
+            f"network(s) of {graph.number_of_nodes()} nodes; links into other areas are not drawn)"
+        )
     visualizer.scope = scope
     if visualizer.interactive:
-        image = visualizer.render(graph, diff, trace=trace)
+        image = visualizer.render(view_graph, view_diff, trace=trace)
     else:
         image = (
-            visualizer.render(graph, diff, highlight=trace.edges)
+            visualizer.render(view_graph, view_diff, highlight=trace.edges)
             if trace
-            else visualizer.render(graph, diff)
+            else visualizer.render(view_graph, view_diff)
         )
     print(f"\n Diagram   : {image}")
     if not visualizer.interactive:
@@ -705,6 +797,46 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
     return (
         EXIT_FINDINGS if args.fail_on_findings and diff.critical_findings else EXIT_OK
     )
+
+
+def serve(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> int:
+    """``--serve``: run the embedded web server until interrupted.
+
+    Each poll the server starts (``POST /api/poll``, or every ``server.poll_interval`` seconds) is one
+    normal ``run`` with the same options, minus ``--serve``.
+    """
+    from src.web.server import create_server, run_server
+
+    if args.dry_run or args.trace:
+        raise TrackerError(
+            "--serve writes state and answers traces itself: it cannot be combined with --dry-run or --trace"
+        )
+    settings = load_settings(args.config, required=False)
+    options = ServerOptions.from_settings(settings, port=args.port)
+    poll_args = argparse.Namespace(**{**vars(args), "serve": False})
+
+    def poll_once() -> int:
+        return run(poll_args, notifier)
+
+    server = create_server(
+        options.host,
+        options.port,
+        data_dir=DATA_DIR,
+        output_html=OUTPUT_HTML,
+        options=VisualOptions.from_settings(settings.get("visualization")),
+        poll_fn=poll_once,
+        poll_interval=options.poll_interval,
+    )
+    shown = "[" + options.host + "]" if ":" in options.host else options.host
+    print(
+        f"[*] Serving the OSPF topology explorer on http://{shown}:{server.server_port}/"
+    )
+    if options.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            "[!] The server has no login and can start polls: keep it on a trusted network or behind a proxy."
+        )
+    run_server(server)
+    return EXIT_OK
 
 
 def _finding_severity(finding: Any) -> str:
@@ -853,6 +985,11 @@ def main(argv: list[str] | None = None) -> int:
             notifier = None
 
         return run(args, notifier=notifier)
+    except (
+        PollBusyError
+    ) as exc:  # another poll is running: skipping is expected, not an alert
+        logger.warning("%s", exc)
+        return EXIT_ERROR
     except TrackerError as exc:
         logger.error("%s", exc)
         if notifier and notifier.config.enabled:

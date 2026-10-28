@@ -343,7 +343,13 @@ def test_the_page_needs_no_network():
         not re.search(r'(?:src|href)\s*=\s*["\']https?://', page)
         and "@import" not in page
     )
-    assert "fetch(" not in page and "XMLHttpRequest" not in page
+    # The one request the page may make is the history bar asking the web server that served it (main.py --serve)
+    # for ``api/...`` on the same origin - and only when the page came over http(s), never from a file on disk.
+    assert "XMLHttpRequest" not in page and "WebSocket" not in page
+    targets = re.findall(r"fetch\(\s*['\"]([^'\"]*)['\"]", page)
+    assert targets and all(t.startswith("api/") for t in targets)
+    assert page.count("fetch(") == len(targets)  # no fetch of a computed or absolute URL
+    assert "/^https?:$/.test(location.protocol)" in page
 
 
 def test_write_explorer_creates_the_file_and_its_folder(tmp_path):

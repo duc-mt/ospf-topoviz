@@ -1,0 +1,36 @@
+
+       OSPF Router with ID (10.0.0.1)
+
+                AS External Link States
+
+  LS age: 412
+  Options: 0x2  : *|-|-|-|-|-|E|-
+  LS Flags: 0x6
+  LS Type: AS-external-LSA
+  Link State ID: 0.0.0.0 (External Network Number)
+  Advertising Router: 10.0.0.3
+  LS Seq Number: 80000003
+  Checksum: 0x5f1c
+  Length: 36
+  Network Mask: /0
+        Metric Type: 2 (Larger than any link state path)
+        TOS: 0
+        Metric: 1
+        Forward Address: 0.0.0.0
+        External Route Tag: 0
+
+  LS age: 412
+  Options: 0x2  : *|-|-|-|-|-|E|-
+  LS Flags: 0x6
+  LS Type: AS-external-LSA
+  Link State ID: 172.16.50.0 (External Network Number)
+  Advertising Router: 10.0.0.3
+  LS Seq Number: 80000002
+  Checksum: 0x91d2
+  Length: 36
+  Network Mask: /24
+        Metric Type: 1 (Comparable directly to link state metric)
+        TOS: 0
+        Metric: 20
+        Forward Address: 0.0.0.0
+        External Route Tag: 65001

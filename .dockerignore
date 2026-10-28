@@ -1,0 +1,29 @@
+# Keep the build context small and keep secrets and local state out of the image.
+.git
+.gitignore
+.venv
+.agents
+.gemini
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+tests
+docs
+systemd
+scripts
+run
+skills-lock.json
+README.md
+
+# Runtime state and credentials live in volumes (see docker-compose.yml), never in the image.
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+config/settings.yaml
+config/settings.local.yaml
+.env
+*.env
+*.pem
+*.key

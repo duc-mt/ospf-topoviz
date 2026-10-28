@@ -1,0 +1,51 @@
+# OSPF TopoViz - server mode.
+#
+#   docker compose up -d --build        # then open http://127.0.0.1:8080/
+#   docker compose logs -f ospf-topoviz
+#   docker compose exec ospf-topoviz python main.py --replay samples/vyos --dry-run   # one-off command
+#
+# First time: the container runs as UID 10001, so the folders it writes to must belong to that user:
+#
+#   mkdir -p config data output && sudo chown -R 10001:10001 data output && chmod a+r config/*
+#   (config/ only needs to be readable, plus writable if you want it to create settings.yaml itself)
+#
+# or run it as yourself instead:  OSPF_UID=$(id -u) OSPF_GID=$(id -g) docker compose up -d
+#
+# settings.yaml (seeds, credentials, polling, ...) is read from ./config. Credentials can also come from the
+# environment (OSPF_MONITOR_USERNAME / OSPF_MONITOR_PASSWORD / OSPF_MONITOR_SECRET): put them in a .env file and
+# uncomment env_file below - do not write them into this file.
+#
+# The web server has no login. It is published on the loopback address only; to reach it from other machines set
+# OSPF_TOPOVIZ_BIND=0.0.0.0 (or a LAN address) AND put something that authenticates in front of it.
+
+name: ospf-topoviz
+
+services:
+  ospf-topoviz:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ospf-topoviz:latest
+    container_name: ospf-topoviz
+    command: ["--serve"]
+    restart: unless-stopped
+    init: true
+    user: "${OSPF_UID:-10001}:${OSPF_GID:-10001}"
+    # env_file: .env
+    environment:
+      TZ: "${TZ:-UTC}"
+      OSPF_MONITOR_HOST: "0.0.0.0"        # inside the container; who can reach it is decided by `ports`
+      OSPF_MONITOR_PORT: "8080"
+      # Seconds between polls the server starts by itself; 0 = only when asked (POST /api/poll).
+      OSPF_MONITOR_POLL_INTERVAL: "${OSPF_MONITOR_POLL_INTERVAL:-0}"
+    ports:
+      - "${OSPF_TOPOVIZ_BIND:-127.0.0.1}:8080:8080"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./output:/app/output
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The image's HEALTHCHECK (GET /api/status) applies; `docker compose ps` shows "healthy".

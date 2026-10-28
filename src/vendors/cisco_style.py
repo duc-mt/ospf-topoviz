@@ -14,13 +14,16 @@ Notes:         Requires Python 3.8+
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from dataclasses import dataclass, field
 
 from src.vendors.base import (
+    dotted_area,
     UNKNOWN_AREA,
     KIND_STUB,
+    ExternalLsa,
     LinkRecord,
     Lsdb,
     LsdbAdapter,
@@ -42,8 +45,23 @@ _HEADER = re.compile(rf"OSPF Router with ID\s*\(({_IP})\)(.*)")
 _PROCESS = re.compile(r"\((?:Process|Instance) ID\s+([^)\s]+)\)")
 _VRF = re.compile(r"\(VRF\s+([^)\s]+)\)")
 _AREA = re.compile(
-    r"(?:Router|Net(?:work)?)\s+Link\s+States\s*\(Area\s+([\d.]+)\)", re.IGNORECASE
+    r"(?:Router|Net(?:work)?)\s+Link\s+States\s*\(Area\s+([\d.]+)[^)]*\)",
+    re.IGNORECASE,
 )
+#: Header above the external LSAs: ``AS External Link States`` (FRR), ``Type-5 AS External Link States`` and
+#: ``Type-7 AS External Link States (Area 1)`` (IOS), ``NSSA-external Link States (Area 0.0.0.1 [NSSA])`` (FRR).
+_EXT_HEADER = re.compile(
+    r"((?:Type-[57]\s+)?(?:AS[\s-]+External|NSSA[\s-]*external))\s+Link\s+States"
+    r"(?:\s*\(Area\s+([\d.]+)[^)]*\))?",
+    re.IGNORECASE,
+)
+_NSSA_WORDS = re.compile(r"nssa|type-7", re.IGNORECASE)
+_EXT_METRIC_TYPE = re.compile(r"^\s*Metric\s+Type\s*:\s*[EN]?([12])\b", re.IGNORECASE)
+_EXT_METRIC = re.compile(r"^\s*Metric\s*:\s*(\d+)", re.IGNORECASE)
+_EXT_FORWARD = re.compile(
+    r"^\s*(?:NSSA:\s*)?Forward(?:ing)?\s+Address\s*:\s*(\S+)", re.IGNORECASE
+)
+_EXT_TAG = re.compile(r"^\s*External\s+Route\s+Tag\s*:\s*(\d+)", re.IGNORECASE)
 _LS_START = re.compile(r"^\s*LS\s+age\s*:", re.IGNORECASE)
 _LS_AGE = re.compile(r"^\s*LS\s+age\s*:\s*(?:MAXAGE\()?(\d+)", re.IGNORECASE)
 _ABR_LINE = re.compile(r"^\s*Area\s+Border\s+Router\s*$", re.IGNORECASE)
@@ -83,6 +101,12 @@ class _Lsa:
     mask: str | None = None
     attached: list[str] = field(default_factory=list)
     links: list[LinkRecord] = field(default_factory=list)
+    #: External LSAs only: which header the LSA sits under (``True`` = an NSSA / Type 7 header).
+    nssa: bool = False
+    metric_type: str | None = None  # "1" | "2" as printed
+    metric: int | None = None
+    forward: str | None = None
+    tag: int | None = None
 
 
 class CiscoStyleTextAdapter(LsdbAdapter):
@@ -175,6 +199,61 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 f"costs are unknown. {self.metric_hint}".strip()
             )
 
+    # --------------------------------------------------------------- external
+    def parse_external(
+        self, raw_external: str, raw_nssa: str, process_id: str | None
+    ) -> tuple[list[ExternalLsa], list[ExternalLsa]]:
+        """Parse ``show ip ospf database external`` and ``... nssa-external`` into ``(type5, type7)``.
+
+        Either text may hold both kinds (the header above each LSA says which it is), so a platform that
+        prints them together is read correctly too. An LSA missing its advertising router, prefix or metric
+        is skipped with a debug message instead of failing the poll: these LSAs are extra detail.
+        """
+        type5: list[ExternalLsa] = []
+        type7: list[ExternalLsa] = []
+        for raw in (raw_external, raw_nssa):
+            lsas, _seen = self._scan(raw)
+            for lsa in lsas:
+                if not self._wanted(lsa, process_id):
+                    continue
+                external = self._external_from(lsa)
+                if external is not None:
+                    (type7 if external.is_nssa else type5).append(external)
+        return type5, type7
+
+    @staticmethod
+    def _external_from(lsa: _Lsa) -> ExternalLsa | None:
+        """Turn a scanned external LSA into the neutral model (``None`` if it is not one, or is incomplete)."""
+        kind = lsa.lsa_type.lower()
+        if "external" not in kind:
+            return None
+        nssa = lsa.nssa or bool(_NSSA_WORDS.search(kind))
+        mask = dotted_mask(lsa.mask)
+        if not (lsa.adv and lsa.lsa_id and mask and lsa.metric is not None):
+            logger.debug(
+                "Skipping incomplete external LSA %s from %s", lsa.lsa_id, lsa.adv
+            )
+            return None
+        try:
+            prefix = str(ipaddress.ip_network(f"{lsa.lsa_id}/{mask}", strict=False))
+        except ValueError:
+            logger.debug(
+                "Skipping external LSA with a bad prefix: %s/%s", lsa.lsa_id, mask
+            )
+            return None
+        letter = "N" if nssa else "E"
+        return ExternalLsa(
+            adv_router=lsa.adv,
+            prefix=prefix,
+            metric=lsa.metric,
+            metric_type=f"{letter}{lsa.metric_type or '2'}",
+            forwarding_address=lsa.forward or "0.0.0.0",
+            tag=lsa.tag or 0,
+            area=dotted_area(lsa.area) if nssa and lsa.area != UNKNOWN_AREA else None,
+            age=lsa.age,
+            seq=lsa.seq,
+        )
+
     # ------------------------------------------------------------- neighbours
     def parse_neighbors(
         self, raw: str, process_id: str | None
@@ -250,6 +329,7 @@ class CiscoStyleTextAdapter(LsdbAdapter):
         process: str | None = None
         vrf: str | None = None
         area = UNKNOWN_AREA
+        nssa_scope = False  # inside an NSSA / Type 7 section
         cur: _Lsa | None = None
         link: LinkRecord | None = None
 
@@ -265,10 +345,11 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 close()
                 rest = header.group(2)
                 p, v = _PROCESS.search(rest), _VRF.search(rest)
-                process, vrf, area = (
+                process, vrf, area, nssa_scope = (
                     (p.group(1) if p else None),
                     (v.group(1) if v else None),
                     UNKNOWN_AREA,
+                    False,
                 )
                 seen.headers.append((header.group(1), process, vrf))
                 if process:
@@ -276,7 +357,12 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 continue
             if (m := _AREA.search(line)) is not None:
                 close()
-                area = m.group(1)
+                area, nssa_scope = m.group(1), False
+                continue
+            if (m := _EXT_HEADER.search(line)) is not None:
+                close()  # Type 5 is domain-wide (no area); Type 7 names its NSSA
+                area = m.group(2) or UNKNOWN_AREA
+                nssa_scope = bool(_NSSA_WORDS.search(m.group(1)))
                 continue
             if _LS_START.match(line):
                 close()
@@ -286,6 +372,7 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                     process=process,
                     vrf=vrf,
                     age=int(age.group(1)) if age else None,
+                    nssa=nssa_scope,
                 )
                 continue
             if cur is None:
@@ -323,6 +410,14 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 )  # own interface address; for stubs the network mask
             elif link is not None and (m := _METRIC.match(line)):
                 link.metric = int(m.group(1))
+            elif m := _EXT_METRIC_TYPE.match(line):
+                cur.metric_type = m.group(1)
+            elif m := _EXT_METRIC.match(line):
+                cur.metric = int(m.group(1))
+            elif m := _EXT_FORWARD.match(line):
+                cur.forward = m.group(1)
+            elif m := _EXT_TAG.match(line):
+                cur.tag = int(m.group(1))
             elif m := _MASK.match(line):
                 cur.mask = m.group(1)
             elif m := _ATTACHED.match(line):

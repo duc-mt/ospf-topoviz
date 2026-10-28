@@ -41,6 +41,14 @@ ROUTE_EXTERNAL = "External"  # E1/E2/N1/N2: the output does not say which
 INTERNAL_ROUTE_TYPES = (ROUTE_INTRA, ROUTE_INTER, ROUTE_INTERNAL)
 
 
+def dotted_area(area: str) -> str:
+    """An OSPF area ID in dotted form: ``1`` -> ``0.0.0.1`` (IOS prints some areas as plain numbers)."""
+    text = str(area).strip()
+    if text.isdigit() and int(text) < 2**32:
+        return str(ipaddress.IPv4Address(int(text)))
+    return text
+
+
 class ParserError(TrackerError):
     """Raised when LSDB text cannot be parsed into a usable topology."""
 
@@ -95,6 +103,45 @@ class NetworkLsa:
     age: int | None = None
 
 
+#: Metric types of an external LSA: E1/E2 for AS-External (Type 5), N1/N2 for NSSA-External (Type 7).
+EXTERNAL_METRIC_TYPES = (ROUTE_E1, ROUTE_E2, ROUTE_N1, ROUTE_N2)
+
+
+@dataclass
+class ExternalLsa:
+    """Type 5 (AS-External) or Type 7 (NSSA-External) LSA: one prefix an ASBR injects into OSPF.
+
+    ``metric_type`` tells the two apart: ``E1`` / ``E2`` are Type 5, ``N1`` / ``N2`` are Type 7. ``E1`` and ``N1``
+    add the internal cost to the ASBR to ``metric``; ``E2`` and ``N2`` do not. ``prefix`` is CIDR text and may be
+    an IPv4 or an IPv6 network. ``forwarding_address`` is ``0.0.0.0`` (``::`` for IPv6) when traffic is to be
+    sent to the ASBR itself. A Type 7 LSA is flooded in one NSSA only, so ``area`` names it there; a Type 5 LSA
+    is domain-wide and has no area (``None``).
+    """
+
+    adv_router: str
+    prefix: str
+    metric: int
+    metric_type: str
+    forwarding_address: str = "0.0.0.0"
+    tag: int = 0
+    #: The NSSA a Type 7 LSA lives in; ``None`` for a (domain-wide) Type 5 LSA.
+    area: str | None = None
+    #: Seconds since the LSA was originated (``None`` if the platform omitted it); see ``RouterLsa.age``.
+    age: int | None = None
+    #: LSA sequence number as a signed 32-bit value (larger = newer); ``None`` if the platform omitted it.
+    seq: int | None = None
+
+    @property
+    def is_nssa(self) -> bool:
+        """True for a Type 7 (NSSA) LSA."""
+        return self.metric_type in (ROUTE_N1, ROUTE_N2)
+
+    @property
+    def ip_version(self) -> int:
+        """4 or 6, from the prefix."""
+        return ipaddress.ip_network(self.prefix, strict=False).version
+
+
 @dataclass
 class Lsdb:
     """Everything an adapter extracted from one poll."""
@@ -105,6 +152,12 @@ class Lsdb:
     process_ids: list[str] = field(default_factory=list)
     #: Router ID of the router that produced this output (``None`` if the output does not say).
     router_id: str | None = None
+    #: Type 5 LSAs (domain-wide external routes). Empty when the platform's external LSAs were not collected.
+    external_lsas: list[ExternalLsa] = field(default_factory=list)
+    #: Type 7 LSAs (external routes inside an NSSA). Empty when they were not collected.
+    nssa_lsas: list[ExternalLsa] = field(default_factory=list)
+    #: IP version of the routing domain this LSDB describes: 4 (OSPFv2) or 6 (OSPFv3).
+    ip_version: int = 4
 
 
 @dataclass
@@ -220,6 +273,16 @@ class LsdbAdapter(ABC):
     ) -> list[NeighborRecord] | None:
         """Parse the neighbour table; ``None`` means this platform has no neighbour parser."""
         return None
+
+    def parse_external(
+        self, raw_external: str, raw_nssa: str, process_id: str | None
+    ) -> tuple[list[ExternalLsa], list[ExternalLsa]]:
+        """Parse the AS-External (Type 5) and NSSA-External (Type 7) LSA outputs into ``(type5, type7)``.
+
+        A platform without an external-LSA parser returns two empty lists, so external LSAs are simply not
+        part of its topology (the router and network LSAs are unaffected).
+        """
+        return [], []
 
     def parse_routes(self, raw: str, process_id: str | None) -> list[OSPFRoute] | None:
         """Parse the OSPF routing table; ``None`` means this platform has no route parser."""

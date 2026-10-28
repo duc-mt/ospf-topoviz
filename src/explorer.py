@@ -20,7 +20,7 @@ from typing import Any
 
 import networkx as nx
 
-from src import __version__, node_sort_key
+from src import __version__, atomic_write_text, node_sort_key
 from src.graph_engine import TopologyDiff
 from src.layout import NodeSpec, compute_layout
 from src.visualizer import NETWORK_ID_PREFIX, TopologyVisualizer, VisualOptions
@@ -48,11 +48,17 @@ def _title_and_sub(
             sub.append(node)
         roles = [
             r
-            for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr")))
+            for r, on in (
+                ("ABR", attrs.get("abr")),
+                ("ASBR", attrs.get("asbr") or attrs.get("is_asbr")),
+            )
             if on
         ]
         if roles:
             sub.append("/".join(roles))
+        if attrs.get("externals"):
+            count = len(attrs["externals"])
+            sub.append(f"{count} external route{'s' if count != 1 else ''}")
     else:
         title = f"net {attrs.get('prefix') or attrs.get('address') or str(node).removeprefix(NETWORK_ID_PREFIX)}"
         if attrs.get("dr"):
@@ -68,7 +74,14 @@ def _role(kind: str, attrs: dict[str, Any]) -> str:
     """The badge under a router's name: ``ABR``, ``ASBR``, ``ABR/ASBR`` or plain ``Router``."""
     if kind != "router":
         return ""
-    flags = [r for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr"))) if on]
+    flags = [
+        r
+        for r, on in (
+            ("ABR", attrs.get("abr")),
+            ("ASBR", attrs.get("asbr") or attrs.get("is_asbr")),
+        )
+        if on
+    ]
     return "/".join(flags) or "Router"
 
 
@@ -175,6 +188,7 @@ def build_scene(
     trace: Any = None,
     scope: str = "default",
     generated: str | None = None,
+    history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Turn the graph, the diff and the cross-check findings into the data the page draws.
 
@@ -186,6 +200,8 @@ def build_scene(
         scope: Names this network in the browser's saved-layout store (e.g. the seed routers), so layouts
             of different networks do not collide.
         generated: Timestamp shown in the header.
+        history: Set when the scene shows a past run (``run_id``, ``timestamp``, ``is_suspect``); the page
+            names it in its history bar.
     """
     options = options or VisualOptions()
     removed = {r["id"]: r for r in diff.removed_nodes}
@@ -230,7 +246,7 @@ def build_scene(
             "sub": sub,
             "areas": areas,
             "abr": bool(attrs.get("abr")),
-            "asbr": bool(attrs.get("asbr")),
+            "asbr": bool(attrs.get("asbr") or attrs.get("is_asbr")),
             "role": _role(kind, attrs),
             "status": status,
             "stale": bool(attrs.get("stale")),
@@ -239,6 +255,13 @@ def build_scene(
             "prefix": attrs.get("prefix"),
             "prefixes": [e["prefix"] for e in attrs.get("prefixes") or ()][:40],
             "prefix_count": len(attrs.get("prefixes") or ()),
+            # the external routes (Type 5 / Type 7 LSAs) an ASBR injects: the first few, and how many in all
+            "externals": [
+                {k: e.get(k) for k in ("prefix", "metric", "metric_type")}
+                for e in attrs.get("externals") or ()
+            ][:40],
+            "external_count": len(attrs.get("externals") or ()),
+            "border_areas": [str(a) for a in attrs.get("border_areas") or ()],
             "name": options.names.get(node),
         }
 
@@ -383,6 +406,7 @@ def build_scene(
             "areas": sorted({a for n in scene_nodes.values() for a in n["areas"]}),
             "backbone": [b.id for b in layout.areas if b.backbone],
             "device_type": str(meta_graph.get("device_type") or ""),
+            "history": history,
         },
         "nodes": list(scene_nodes.values()),
         "links": scene_links,
@@ -436,10 +460,7 @@ def write_explorer(
     scope: str = "default",
 ) -> Path:
     """Write the explorer page to ``path`` and return it."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        render_html(build_scene(graph, diff, options, trace=trace, scope=scope)),
-        encoding="utf-8",
+    # Atomic: the web server may be sending this very file to a browser while a poll rewrites it.
+    return atomic_write_text(
+        path, render_html(build_scene(graph, diff, options, trace=trace, scope=scope))
     )
-    return path

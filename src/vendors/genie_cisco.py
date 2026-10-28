@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 from src.vendors.base import (
+    ExternalLsa,
     LinkRecord,
     Lsdb,
     LsdbAdapter,
@@ -58,6 +59,7 @@ class GenieCiscoAdapter(LsdbAdapter):
         network_cls: str,
         neighbor: tuple[str, str] | None = None,
         route_format: str | None = None,
+        external_text: bool = False,
     ) -> None:
         """
         Args:
@@ -66,6 +68,9 @@ class GenieCiscoAdapter(LsdbAdapter):
             network_cls: Genie parser class for the network-LSA command.
             neighbor: ``(module, class)`` of the Genie neighbour-table parser (``None`` = not supported); it
                 often lives in a different Genie module than the database parsers.
+            route_format: Which routing-table layout ``parse_routes`` understands (``None`` = none).
+            external_text: Read Type 5 / Type 7 LSAs with the Cisco-style text parser (IOS / IOS-XE print them
+                in the format that parser knows); ``False`` = this platform's external LSAs are not collected.
 
         Raises:
             ParserError: If pyATS/Genie is not installed.
@@ -86,6 +91,19 @@ class GenieCiscoAdapter(LsdbAdapter):
         )
         self.route_format = route_format
         self._empty_exc = SchemaEmptyParserError
+        self._external_text = None
+        if external_text:
+            from src.vendors.cisco_style import CiscoStyleTextAdapter
+
+            self._external_text = CiscoStyleTextAdapter("Cisco IOS / IOS-XE")
+
+    def parse_external(
+        self, raw_external: str, raw_nssa: str, process_id: str | None
+    ) -> tuple[list[ExternalLsa], list[ExternalLsa]]:
+        """Type 5 / Type 7 LSAs (IOS / IOS-XE only; every other Genie platform returns none)."""
+        if self._external_text is None:
+            return [], []
+        return self._external_text.parse_external(raw_external, raw_nssa, process_id)
 
     # ------------------------------------------------------------------ Genie
     def _genie(

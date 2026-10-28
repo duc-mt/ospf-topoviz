@@ -48,11 +48,16 @@ class VendorProfile:
     neighbors: CommandPair | None = None
     #: OSPF routing-table (RIB) command, or ``None`` if the routing table is not collected on this platform.
     routes: CommandPair | None = None
+    #: AS-External (Type 5) / NSSA-External (Type 7) LSA commands, or ``None`` where this platform's external
+    #: LSAs are not collected (its adapter has no parser for them).
+    external: CommandPair | None = None
+    nssa: CommandPair | None = None
 
     def command(
         self, which: str, process_id: str | None, override: str | None = None
     ) -> str:
-        """Return the CLI command for ``which`` (``"router"``, ``"network"``, ``"neighbors"`` or ``"routes"``).
+        """Return the CLI command for ``which`` (``"router"``, ``"network"``, ``"neighbors"``, ``"routes"``,
+        ``"external"`` or ``"nssa"``).
 
         ``override`` is the user's ``device.commands.<which>`` setting; it may contain
         ``{pid}``, which is replaced by the process ID.
@@ -70,6 +75,8 @@ class VendorProfile:
             "network": self.network,
             "neighbors": self.neighbors,
             "routes": self.routes,
+            "external": self.external,
+            "nssa": self.nssa,
         }[which]
         if pair is None:
             raise ConfigError(
@@ -87,12 +94,13 @@ def _genie_cisco(
     network_cls: str,
     neighbor: tuple[str, str] | None = None,
     route_format: str | None = None,
+    external_text: bool = False,
 ) -> Callable[[], LsdbAdapter]:
     def factory() -> LsdbAdapter:
         from src.vendors.genie_cisco import GenieCiscoAdapter
 
         return GenieCiscoAdapter(
-            module, router_cls, network_cls, neighbor, route_format
+            module, router_cls, network_cls, neighbor, route_format, external_text
         )
 
     return factory
@@ -157,6 +165,14 @@ _NXOS_NBR = ("genie.libs.parser.nxos.show_ospf", "ShowIpOspfNeighborDetail")
 _IOSXR = "genie.libs.parser.iosxr.show_ospf"
 _NXOS = "genie.libs.parser.nxos.show_ospf"
 
+#: The external-LSA commands shared by the platforms that take an OSPF process ID the same way (IOS, EOS, AOS-CX).
+_EXTERNAL = CommandPair(
+    "show ip ospf database external", "show ip ospf {pid} database external"
+)
+_NSSA_EXTERNAL = CommandPair(
+    "show ip ospf database nssa-external", "show ip ospf {pid} database nssa-external"
+)
+
 PROFILES: dict[str, VendorProfile] = {}
 
 
@@ -182,10 +198,13 @@ register(
             "ShowIpOspfDatabaseNetwork",
             _IOSXE_NBR,
             "ios",
+            external_text=True,
         ),
         error_markers=_IOS_ERRORS,
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
         routes=CommandPair("show ip route ospf", "show ip route ospf {pid}"),
+        external=_EXTERNAL,
+        nssa=_NSSA_EXTERNAL,
     ),
     "cisco_ios",
     "cisco_xe",
@@ -262,6 +281,8 @@ register(
         ),
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
         routes=CommandPair("show ip route ospf"),
+        external=_EXTERNAL,
+        nssa=_NSSA_EXTERNAL,
     )
 )
 register(
@@ -280,6 +301,8 @@ register(
         ),
         neighbors=CommandPair("show ip ospf neighbor"),
         routes=CommandPair("show ip route ospf"),
+        external=CommandPair("show ip ospf database external"),
+        nssa=CommandPair("show ip ospf database nssa-external"),
     )
 )
 register(
@@ -324,6 +347,8 @@ register(
         ),
         neighbors=CommandPair("show ip ospf neighbor", "show ip ospf {pid} neighbor"),
         routes=CommandPair("show ip route ospf"),
+        external=_EXTERNAL,
+        nssa=_NSSA_EXTERNAL,
     )
 )
 

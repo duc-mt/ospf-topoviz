@@ -15,6 +15,8 @@ Notes:         Requires Python 3.8+
 from __future__ import annotations
 
 import ipaddress
+import os
+from pathlib import Path
 
 __version__ = "1.0.0"
 
@@ -45,3 +47,26 @@ def node_sort_key(node_id: str) -> tuple:
         return (kind, 0, int(ipaddress.ip_address(text)), "")
     except ValueError:
         return (kind, 1, 0, text)
+
+
+def atomic_write_text(
+    path: str | os.PathLike, text: str, encoding: str = "utf-8"
+) -> Path:
+    """Write ``text`` to ``path`` so a reader never sees a half-written file.
+
+    The text goes to ``<path>.tmp`` first and is then moved over ``path`` with ``os.replace`` (atomic on the
+    same filesystem). The parent directory is created if needed; a failed write leaves no ``.tmp`` behind.
+
+    Raises:
+        OSError: If the file cannot be written or moved.
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return path

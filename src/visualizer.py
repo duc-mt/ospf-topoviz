@@ -76,6 +76,9 @@ class Palette:
     fill_unresolved: str
     unresolved_text: str
     fill_removed: str
+    asbr: str = (
+        "#B9770E"  # outline of an AS boundary router (one that injects external routes)
+    )
 
 
 LIGHT = Palette(
@@ -127,6 +130,7 @@ DARK = Palette(
     fill_unresolved="#1E293B",
     unresolved_text="#E6EDF7",
     fill_removed="#4B1D22",
+    asbr="#F5B041",
 )
 PALETTES = {"light": LIGHT, "dark": DARK}
 THEMES = tuple(PALETTES)
@@ -662,18 +666,28 @@ class TopologyVisualizer:
                 "fillcolor": pal.fill_router,
                 "fontcolor": pal.router_text,
             }
+            is_asbr = bool(attrs.get("asbr") or attrs.get("is_asbr"))
             roles = [
-                r
-                for r, on in (("ABR", attrs.get("abr")), ("ASBR", attrs.get("asbr")))
-                if on
+                r for r, on in (("ABR", attrs.get("abr")), ("ASBR", is_asbr)) if on
             ]
             if roles:
                 label += "\\n" + "/".join(roles)
+            externals = attrs.get("externals") or ()
+            if externals:
+                label += f"\\n{_plural(len(externals), 'external route')}"
+            if attrs.get("border_areas"):  # an area view: this router is the edge of it
+                label += "\\nalso in area " + ", ".join(attrs["border_areas"])
             if attrs.get("abr"):
                 look["peripheries"] = (
                     "2"  # a second outline marks the routers that join areas
                 )
         look.update(style="filled", color=pal.node_border, penwidth="1.2")
+        if attrs.get("type") != "network" and (
+            attrs.get("asbr") or attrs.get("is_asbr")
+        ):
+            look.update(
+                color=pal.asbr, penwidth="2.2"
+            )  # drawn first: stale / added / removed still win
 
         if not attrs.get(
             "resolved", True
@@ -721,10 +735,15 @@ class TopologyVisualizer:
         live_links = sum(
             1 for link in links if TopologyVisualizer._link_status(link) != "removed"
         )
+        area = graph.graph.get("filtered_area")
         lines = [
-            f"OSPF topology  |  {_plural(kinds.count('router'), 'router')}, "
+            f"OSPF topology{f' - area {area} only' if area else ''}  |  {_plural(kinds.count('router'), 'router')}, "
             f"{_plural(kinds.count('network'), 'transit network')}, {_plural(live_links, 'link')}  |  {stamp}"
         ]
+        if area:
+            lines.append(
+                "area view: area border routers sit on the edge; their links into other areas are not drawn"
+            )
         meta = graph.graph
         flagged = bool(
             meta.get("stale_nodes")
@@ -842,9 +861,13 @@ class TopologyVisualizer:
         dot = self.build_digraph(graph, diff, highlight)
         out_dir = self.output_path.parent
         stem = self.output_path.stem
+        scratch = f".{stem}.{os.getpid()}.tmp"
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
-            rendered = dot.render(filename=stem, directory=str(out_dir), cleanup=True)
+            # Draw beside the target, then move it into place: a reader never sees a half-written image.
+            drawn = dot.render(filename=scratch, directory=str(out_dir), cleanup=True)
+            rendered = out_dir / f"{stem}.{self.image_format}"
+            os.replace(drawn, rendered)
         except graphviz.ExecutableNotFound as exc:
             source_path = self._save_source(dot, out_dir, stem)
             raise VisualizationError(

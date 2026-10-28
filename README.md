@@ -17,7 +17,12 @@ python main.py --replay samples/vyos
 - **Change detection** — added/removed nodes, added/removed links, metric changes
 - **Partial-LSDB guard** — detects when the seed router has lost an adjacency (or a merge seed did not answer) and refuses to overwrite a good baseline with a degraded view
 - **Readable diagrams** — one line per link with the cost and interface address at each end, area clusters, automatic layout direction, diff highlighting
-- **Atomic state rotation** — `current_state.json` → `previous_state.json`, crash-safe
+- **External routes** — Type 5 / Type 7 LSAs mark the ASBRs and the prefixes they inject; `--trace` follows an external prefix to its ASBR and prices it as OSPF does (E1 / E2, N1 / N2). Opt-in (`polling.external`)
+- **Topology history ("time travel")** — every accepted run is kept in `data/history/history.db`; the explorer gets a history slider that redraws any past state, with what changed in that run highlighted
+- **Embedded web server** — `--serve` serves the explorer page, the history and a small REST API (status, history, on-demand SPF trace, trigger a poll) with the standard library only
+- **One area at a time** — `--area 0` draws just that area (area border routers on its edge); the baseline and the history keep the whole network
+- **Container-ready** — hardened multi-stage `Dockerfile` and `docker-compose.yml` with Graphviz built in
+- **Atomic state rotation** — `current_state.json` → `previous_state.json`, crash-safe; every file written to `data/` and `output/` is written atomically
 - **Credential-safe** — passwords never have to touch disk; `OSPF_MONITOR_*` env vars override the config file
 - **Telegram Alerting & Production Scheduling** — automated dispatch of topology changes, cross-check anomaly findings, and crash alerts, with non-blocking concurrency locking. See [docs/TELEGRAM_ALERTING.md](docs/TELEGRAM_ALERTING.md).
 
@@ -306,6 +311,48 @@ python main.py --trace 10.136.4.9                          # the traced path is 
 
 The explorer needs a current browser; the layout itself is computed by Python, so the picture is reproducible. The PNG/SVG/PDF output and `--layout` (the Graphviz engine) keep their layout; `--theme dark` redraws them in dark colours (`python main.py --output topo.png --theme dark`).
 
+### External routes (Type 5 / Type 7)
+
+With `polling.external: true` each router is also asked for its AS-External and NSSA-External LSAs (`show ip ospf database external` / `nssa-external`; VyOS/FRR, Cisco IOS / IOS-XE, Arista EOS and Aruba AOS-CX — the other platforms are skipped). A router that originates any of them is marked an **ASBR** (`is_asbr`) and carries its external prefixes as an attribute: they add no node or link, so the shortest-path calculation is untouched. Type 5 LSAs are domain-wide; a Type 7 LSA names the NSSA it lives in. In replays, put the output in `external_lsdb.txt` / `nssa_lsdb.txt` next to `router_lsdb.txt` (see `samples/vyos`).
+
+What it is used for: the diagram and the explorer label ASBRs and count their external routes; `--trace` (and `GET /api/trace`) follows an external prefix to the ASBR(s) that advertise it — type 1 adds the cost to the ASBR to the metric, type 2 only compares metrics and uses the cost to the ASBR as a tie-break; a polled router with no path to an ASBR gets an `ASBR_UNREACHABLE` warning, and an ASBR that advertises routes but has no router LSA in the topology an `ASBR_UNKNOWN` note (its area is probably not polled). Not done: the external routes of a router's RIB are not checked against the external LSAs, and the forwarding address is only called out in the trace notes. External LSAs are extra detail — output that cannot be read is logged and skipped, it never fails the poll. The data model also carries `ip_version` (4 or 6) and accepts IPv6 prefixes; there is no OSPFv3 router / network LSA parser yet.
+
+### History and the web server (`--serve`)
+
+Every run that is saved as the new baseline is also appended to `data/history/history.db` (SQLite): the time, what changed (nodes, links, metric changes), whether the run was flagged suspect and accepted with `--accept-changes`, the cross-check findings and the complete graph. Runs held back by the guard, and `--dry-run`, are not recorded. `history.max_runs` (default 2000; `0` = keep everything) drops the oldest runs.
+
+```bash
+python main.py --serve                      # http://127.0.0.1:8080/
+python main.py --serve --port 9000 --replay samples/vyos
+```
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /` | the latest explorer page (`output/topology.html`), with a history slider |
+| `GET /api/status` | baseline time, node / link counts, recent findings, poll state |
+| `GET /api/history?limit=N` | the latest runs, newest first (default 50, at most 500) |
+| `GET /api/history/<run_id>` | one run: changes, findings and the complete graph |
+| `GET /api/history/<run_id>/scene` | that run as the explorer draws it (what the slider loads) |
+| `GET /api/trace?source=<router_id>&dest=<ip\|prefix>` | the shortest path(s) over the current topology |
+| `POST /api/poll` | starts a poll in the background: `202`, or `409` if one is already running |
+
+Answers are `{"status": "ok", "data": ...}` or `{"status": "error", "error": "..."}` with `200`/`202`, `400`, `404`, `405`, `409` or `501` (no poller). Input is validated (`ipaddress`, a strict run-ID pattern); the server never maps a URL to a file. Settings (`server:` in the settings file; environment variables win, then `--port`): `host` (default `127.0.0.1`), `port` (`8080`), `poll_interval` (seconds between polls the server starts itself, `0` = only on `POST /api/poll`) — `OSPF_MONITOR_HOST`, `OSPF_MONITOR_PORT`, `OSPF_MONITOR_POLL_INTERVAL`.
+
+**The server has no login and can start polls of your routers.** Keep it on the loopback address, or put something that authenticates in front of it. Only one poll runs at a time: the CLI, cron and the server share the lock `data/.poll.lock` (a run that finds it taken exits with code 1 without alerting; `--dry-run` needs no lock).
+
+### One area at a time (`--area`)
+
+`--area 0` (or `0.0.0.1`) draws only that area: its routers and transit networks and the links of that area, with the area border routers on the edge — each says which other areas it also joins. Links into other areas are not drawn. Only the diagram changes: the saved baseline, the history, the console summary and the explorer page (`output/topology.html`) still cover the whole network. An area with nothing in it is an error that lists the areas there are.
+
+### Docker
+
+```bash
+mkdir -p config data output && sudo chown -R 10001:10001 data output
+docker compose up -d --build          # http://127.0.0.1:8080/
+```
+
+The image (`python:3.12-slim-bookworm`, two stages, Graphviz inside, unprivileged user `appuser`, healthcheck on `/api/status`) runs `python main.py --serve`; `config/`, `data/` and `output/` are volumes. The compose file publishes the port on the loopback address only (`OSPF_TOPOVIZ_BIND` changes that) and runs with `no-new-privileges` and all capabilities dropped. Credentials: use `config/settings.yaml` or a `.env` file, never the compose file.
+
 ### Credentials via environment variables
 
 > [!NOTE]
@@ -340,6 +387,9 @@ Options:
   --trace IP|PREFIX     Show how a router reaches this address/prefix (RIB entry + LSDB path); drawn in blue
   --trace-from ROUTER_ID
                         Router to trace from (default: the first polled router that has a routing table)
+  --area AREA_ID        Draw only this OSPF area (0, 1 or 0.0.0.1); the baseline, history and explorer keep the whole network
+  --serve               Run the embedded web server (explorer, history, REST API) instead of a single poll
+  --port PORT           Web server port (default 8080, or OSPF_MONITOR_PORT / server.port in the settings file)
   --fail-on-findings    Exit with code 4 when the cross-checks report a critical finding
   --replay DIR          Parse saved CLI output instead of connecting via SSH
   --save-raw DIR        Also write the raw CLI output to DIR (replayable later; one DIR/<host>/ per seed when several are configured)
@@ -541,7 +591,7 @@ The explorer page itself (hover, select, drag and save, search, filters, bundles
 
 ```bash
 npm install --prefix tests/js     # once: installs jsdom
-pytest tests/test_explorer_js.py
+pytest tests/test_explorer_js.py tests/test_history_page_js.py
 ```
 
 ---
@@ -568,7 +618,8 @@ ospf-topoviz/
 │   ├── visualizer.py         # Graphviz rendering (and the switch to the explorer for .html output)
 │   ├── layout.py             # Hub-and-spoke / area-box layout engine (pure geometry)
 │   ├── explorer.py           # Builds the interactive explorer: scene data + self-contained HTML
-│   ├── web/explorer.html     # The explorer page (HTML, CSS, JavaScript; no external resources)
+│   ├── web/explorer.html     # The explorer page (HTML, CSS, JavaScript; no external resources; history slider)
+│   ├── web/server.py         # --serve: ThreadingHTTPServer, REST API, poll coordinator / scheduler
 │   └── vendors/              # Per-platform LSDB parsers
 │       ├── base.py           # Neutral data model (LSAs, OSPFNeighbor, OSPFRoute) and adapter interface
 │       ├── routes.py         # Routing-table (RIB) parsers: IOS/EOS/FRR, NX-OS, Junos
@@ -576,8 +627,10 @@ ospf-topoviz/
 │       ├── genie_cisco.py    # Cisco via pyATS/Genie
 │       ├── genie_junos.py    # Juniper via pyATS/Genie
 │       └── huawei.py         # Huawei VRP text parser
+├── Dockerfile                # Multi-stage production image (Graphviz, unprivileged user, healthcheck)
+├── docker-compose.yml        # Server mode with config / data / output volumes
 ├── samples/                  # Bundled offline LSDB captures (one dir per vendor)
-├── data/                     # Runtime state (git-ignored)
+├── data/                     # Runtime state: baseline, history/history.db, .poll.lock (git-ignored)
 ├── output/                   # Generated diagrams (git-ignored)
 └── tests/                    # Unit tests
 ```

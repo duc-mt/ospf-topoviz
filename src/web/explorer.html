@@ -119,7 +119,7 @@ details.group .n{margin-left:auto;color:var(--muted)}
 html,body{font-variant-numeric:tabular-nums}
 .mono,.num,.ip{font-family:var(--mono);font-variant-numeric:tabular-nums}
 #canvas text{font-variant-numeric:tabular-nums}
-#summary,#q,.panel,#tip,#sim-pop,#toast,#sel,#minimap,#diff-bar,#hotkeys,#search-results{background:var(--glass-bg);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);border-radius:10px}
+#summary,#q,.panel,#tip,#sim-pop,#toast,#sel,#minimap,#diff-bar,#hist-bar,#hotkeys,#search-results{background:var(--glass-bg);backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);border-radius:10px}
 #sim-bar{backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);box-shadow:var(--glass-shadow)}
 #toast{border-radius:99px;bottom:104px}
 .panel{left:14px;right:auto}
@@ -165,6 +165,13 @@ details.group>summary .pill{margin-left:6px}
 #hotkeys{position:absolute;z-index:4;right:14px;bottom:12px;padding:5px 10px;font:11px/1.3 var(--mono);color:var(--muted);white-space:nowrap}
 #hotkeys .hk{color:var(--text);font-weight:700}
 #diff-bar{position:absolute;z-index:4;left:14px;bottom:50px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 10px;max-width:calc(100% - 210px)}
+#hist-bar{position:absolute;z-index:4;left:14px;bottom:100px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px;max-width:calc(100% - 210px)}
+#hist-bar.hidden{display:none}
+#hist-bar .ht{font-weight:700;font-size:12px}
+#hist-bar input[type=range]{width:min(320px,40vw)}
+#hist-bar button{padding:3px 9px;font-size:12px}
+#hist-bar #h-label{font-size:12px;color:var(--muted)}
+#hist-bar #h-label.past{color:var(--warn);font-weight:600}
 #diff-bar .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 #diff-bar .seg button{border:0;border-radius:0;background:transparent;padding:4px 11px;font-size:12px}
 #diff-bar .seg button.on{background:var(--on);color:var(--strong);font-weight:700}
@@ -188,7 +195,7 @@ details.group>summary .pill{margin-left:6px}
 @keyframes simpulse{0%{transform:scale(.55);opacity:.9}100%{transform:scale(1.8);opacity:0}}
 .sim-blue{animation:simflow .9s linear infinite}
 @media (prefers-reduced-motion:reduce){.sim-pulse,.sim-blue{animation:none}#vp.smooth,#canvas .node,#canvas .link,#sel{transition:none}}
-@media print{#minimap,#hotkeys,#diff-bar,#sel,#search-results{display:none}}
+@media print{#minimap,#hotkeys,#diff-bar,#hist-bar,#sel,#search-results{display:none}}
 </style>
 </head>
 <body>
@@ -250,6 +257,14 @@ details.group>summary .pill{margin-left:6px}
       </span>
       <span id="diff-sum"></span>
       <span class="key"><i class="k-add"></i>added<i class="k-rm"></i>removed<i class="k-ch"></i>changed</span>
+    </div>
+    <div id="hist-bar" class="hidden" role="group" aria-label="Topology history (time travel)">
+      <span class="ht">History</span>
+      <button id="h-prev" type="button" title="Previous (older) run" aria-label="Older run">&#9664;</button>
+      <input id="h-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Run in the history" disabled>
+      <button id="h-next" type="button" title="Next (newer) run" aria-label="Newer run">&#9654;</button>
+      <button id="h-live" type="button" title="Back to the latest run">Latest</button>
+      <span id="h-label" aria-live="polite"></span>
     </div>
     <canvas id="minimap" width="160" height="100" aria-label="Minimap radar" title="Minimap: click or drag to move the view"></canvas>
     <div id="hotkeys"><span class="hk">[ / ]</span> Search &nbsp;&middot;&nbsp; <span class="hk">[ F ]</span> Fit &nbsp;&middot;&nbsp; <span class="hk">[ S ]</span> Simulate &nbsp;&middot;&nbsp; <span class="hk">[ Esc ]</span> Deselect</div>
@@ -1203,9 +1218,12 @@ function buildDiffBar() {
   if (c.removedLinks) bits.push('\u2212' + c.removedLinks + ' link' + (c.removedLinks > 1 ? 's' : ''));
   if (c.metricChanges) bits.push(c.metricChanges + ' cost change' + (c.metricChanges > 1 ? 's' : ''));
   $('diff-sum').textContent = !has ? 'No earlier snapshot to compare with yet' : bits.length ? bits.join('  ') : 'No changes since the last run';
-  Array.prototype.forEach.call(document.querySelectorAll('#diff-bar [data-time]'), function (b) {
-    b.addEventListener('click', function () { setTime(b.getAttribute('data-time')); });
-  });
+  if (!buildDiffBar.wired) {   // a past run can be loaded into the page (loadScene): wire the buttons only once
+    buildDiffBar.wired = true;
+    Array.prototype.forEach.call(document.querySelectorAll('#diff-bar [data-time]'), function (b) {
+      b.addEventListener('click', function () { setTime(b.getAttribute('data-time')); });
+    });
+  }
   syncDiffBar();
 }
 function syncDiffBar() {
@@ -1256,6 +1274,7 @@ function nodeTip(n) {
   if (n.kind === 'router' && n.name) h += '<br>Router ID: ' + esc(n.id);
   if (n.age != null) h += '<br>LSA age: ' + esc(n.age) + ' s';
   if (n.prefix_count) h += '<br>Advertises ' + n.prefix_count + ' prefix' + (n.prefix_count > 1 ? 'es' : '');
+  if (n.external_count) h += '<br>Injects ' + n.external_count + ' external route' + (n.external_count > 1 ? 's' : '');
   h += '<br>Links: ' + (adj[n.id] || []).length;
   var f = SCENE.findings.filter(function (x) { return x.focus.indexOf(n.id) >= 0; }).length;
   if (f) h += '<br><span class="y">' + f + ' cross-check finding' + (f > 1 ? 's' : '') + '</span>';
@@ -1368,7 +1387,9 @@ function overviewTab(s) {
   var html = '<div>' + nodeHealth(n) + (n.role ? ' <span class="pill info">' + esc(n.role) + '</span>' : '') + (n.status ? ' ' + pill('info', n.status.toUpperCase()) : '') + '</div>';
   html += kv([['Name', n.title], [n.kind === 'router' ? 'Router ID' : 'Network', n.kind === 'router' ? n.id : (n.prefix || n.id)], ['Role / tier', n.kind === 'router' ? (n.role || 'Router') + (n.areas.length ? ' \u00b7 area ' + n.areas.join(', ') : '') : (n.kind === 'ghost' ? 'Network (no LSA)' : 'Transit network' + (dr ? ' (' + dr + ')' : ''))],
     ['Vendor', n.kind === 'router' ? (SCENE.meta.device_type ? vendorName(guessVendor(SCENE.meta.device_type)) || SCENE.meta.device_type : '') : ''], ['OS version', n.kind === 'router' ? 'not collected by the OSPF poll' : ''],
-    ['LSA age', n.age != null ? n.age + ' s' : ''], ['Links', String((adj[n.id] || []).length)], ['Prefixes', n.prefix_count ? String(n.prefix_count) : '']]);
+    ['LSA age', n.age != null ? n.age + ' s' : ''], ['Links', String((adj[n.id] || []).length)], ['Prefixes', n.prefix_count ? String(n.prefix_count) : ''],
+    ['External routes', n.external_count ? n.external_count + ' \u2014 ' + (n.externals || []).slice(0, 3).map(function (e) { return e.prefix + ' ' + e.metric_type + '/' + e.metric; }).join(', ') + (n.external_count > 3 ? ', \u2026' : '') : ''],
+    ['Also in area', (n.border_areas || []).join(', ')]]);
   if (fs.length) html += '<h6>Findings</h6>' + fs.map(function (x) { return '<div class="sub2">' + pill(x.severity === 'critical' ? 'down' : x.severity === 'warning' ? 'warn' : 'info', x.severity.toUpperCase()) + ' ' + esc(x.message) + '</div>'; }).join('');
   return html;
 }
@@ -1680,7 +1701,7 @@ function buildDiagnostics() {
   }
 }
 var KIND_TITLE = { ADJ_NOT_FULL: 'LSDB adjacency vs neighbour state', ADJ_MISSING: 'LSDB adjacency, neighbour missing', NBR_NOT_IN_LSDB: 'Neighbour not in LSDB', NBR_STATE_CHANGE: 'Neighbour flap / state change', NBR_LOST: 'Neighbour lost', NBR_NEW: 'New neighbour',
-  ROUTE_MISSING: 'Route missing from RIB (blackhole)', NEXTHOP_DOWN: 'Next hop via non-Full neighbour', ROUTE_STALE: 'Stale route (no LSA)', RIB_EMPTY: 'RIB empty', ROUTE_OVERRIDDEN: 'Route overridden', COST_MISMATCH: 'RIB cost differs from SPF', NEXTHOP_MISMATCH: 'Next hop off the shortest path', ECMP_MISSING: 'ECMP path missing', AREA_UNPOLLED: 'Area not polled (no seed)' };
+  ROUTE_MISSING: 'Route missing from RIB (blackhole)', NEXTHOP_DOWN: 'Next hop via non-Full neighbour', ROUTE_STALE: 'Stale route (no LSA)', RIB_EMPTY: 'RIB empty', ROUTE_OVERRIDDEN: 'Route overridden', COST_MISMATCH: 'RIB cost differs from SPF', NEXTHOP_MISMATCH: 'Next hop off the shortest path', ECMP_MISSING: 'ECMP path missing', AREA_UNPOLLED: 'Area not polled (no seed)', ASBR_UNKNOWN: 'ASBR not in the topology', ASBR_UNREACHABLE: 'ASBR unreachable in the LSDB' };
 function buildFindings() {
   var chips = $('sevchips'), box = $('findings'); chips.textContent = box.textContent = '';
   var counts = { critical: 0, warning: 0, info: 0 };
@@ -2218,12 +2239,16 @@ function nodePopover(n) {
 }
 
 // ---- wiring
-(function () {
-  var a = $('sim-a'), b = $('sim-b');
-  [a, b].forEach(function (sel) {
+function simFillSelects() {   // the router lists of the two pickers (again after loadScene swaps the network)
+  [$('sim-a'), $('sim-b')].forEach(function (sel) {
+    sel.textContent = '';
     var o = document.createElement('option'); o.value = ''; o.textContent = '\u2014 pick a router \u2014'; sel.appendChild(o);
     GM.routers.slice().sort(function (x, y) { return simTitle(x) < simTitle(y) ? -1 : 1; }).forEach(function (id) { var e = document.createElement('option'); e.value = id; e.textContent = simTitle(id); sel.appendChild(e); });
   });
+}
+(function () {
+  var a = $('sim-a'), b = $('sim-b');
+  simFillSelects();
   a.onchange = function () { simSetSource(a.value); };
   b.onchange = function () { simSetTarget(b.value); };
   $('sim-swap').onclick = function () { var t = sim.sourceNode; sim.sourceNode = sim.targetNode; sim.targetNode = t; simRefresh(); };
@@ -2232,6 +2257,78 @@ function nodePopover(n) {
   $('b-sim').onclick = function () { simSetActive(!sim.active); };
 })();
 
+// ------------------------------------------------------------------ time travel
+// Swaps the whole network on screen for another scene (a past run). The scene comes from the web server
+// (main.py --serve); the page itself stays a static file and never writes anything.
+var LIVE_SCENE = SCENE;
+function loadScene(next) {
+  if (sim.active) simSetActive(false);   // a simulation belongs to the network it was started on
+  SCENE = next;
+  [nodes, links, adj, pos].forEach(function (o) { Object.keys(o).forEach(function (k) { delete o[k]; }); });   // in place: window.__explorer holds these objects
+  SCENE.nodes.forEach(function (n) { nodes[n.id] = n; adj[n.id] = []; });
+  SCENE.links.forEach(function (l) { links[l.id] = l; if (adj[l.a]) adj[l.a].push(l.id); if (adj[l.b]) adj[l.b].push(l.id); });
+  STORE = 'ospf-explorer:layout:v1:' + (SCENE.meta.scope || 'default');
+  state.sel = null; state.focus = null; state.matches = null; state.hover = null;
+  state.hiddenAreas = {}; state.bundle.expanded = {}; state.stubs.expanded = {}; state.time = 'overlay';
+  hideInspector(); closeSimPopover();
+  Object.assign(GM, makeGraphModel(SCENE)); simFillSelects();   // GM keeps its identity (the simulation and window.__explorer share it)
+  resetPositions(true);
+  buildHeader(); buildDiagnostics(); buildFindings(); buildLegend(); buildDiffBar();
+  render(); fit();
+}
+
+var hist = { runs: [], index: 0, token: 0, timer: null };   // runs: oldest first; the last one is the live scene
+function histWhen(ts) { return String(ts || '').replace('T', ' ').replace(/(\+00:00|Z)$/, ''); }
+function histChanges(r) {
+  var bits = [];
+  if (r.added_nodes.length) bits.push('+' + r.added_nodes.length + ' node' + (r.added_nodes.length > 1 ? 's' : ''));
+  if (r.removed_nodes.length) bits.push('\u2212' + r.removed_nodes.length + ' node' + (r.removed_nodes.length > 1 ? 's' : ''));
+  if (r.added_links.length) bits.push('+' + r.added_links.length + ' link' + (r.added_links.length > 1 ? 's' : ''));
+  if (r.removed_links.length) bits.push('\u2212' + r.removed_links.length + ' link' + (r.removed_links.length > 1 ? 's' : ''));
+  if (r.metric_changes.length) bits.push(r.metric_changes.length + ' cost change' + (r.metric_changes.length > 1 ? 's' : ''));
+  return bits.length ? bits.join(' ') : 'no changes';
+}
+function histSync() {
+  var n = hist.runs.length, r = hist.runs[hist.index], last = hist.index === n - 1;
+  var slider = $('h-slider'), label = $('h-label');
+  slider.max = String(Math.max(0, n - 1)); slider.value = String(hist.index); slider.disabled = n < 2;
+  $('h-prev').disabled = hist.index <= 0; $('h-next').disabled = last; $('h-live').disabled = last;
+  label.className = last ? '' : 'past';
+  label.textContent = 'Run ' + (hist.index + 1) + ' of ' + n + ' \u00b7 ' + histWhen(r.timestamp) + ' \u00b7 ' + r.node_count + ' nodes, ' + r.link_count + ' links \u00b7 ' + histChanges(r) +
+    (r.is_suspect ? ' \u00b7 SUSPECT (accepted by hand)' : '') + (last ? '' : ' \u00b7 past state \u2014 \u201cLatest\u201d returns');
+  slider.setAttribute('aria-valuetext', label.textContent);
+}
+function histGo(i) {
+  i = Math.max(0, Math.min(hist.runs.length - 1, i));
+  hist.index = i; histSync();
+  var mine = ++hist.token;
+  clearTimeout(hist.timer);
+  hist.timer = setTimeout(function () {   // scrubbing fires many events: only the one the hand stops on is loaded
+    if (i === hist.runs.length - 1) { loadScene(LIVE_SCENE); return; }
+    fetch('api/history/' + encodeURIComponent(hist.runs[i].run_id) + '/scene', { headers: { Accept: 'application/json' } })
+      .then(function (res) { return res.json().then(function (j) { if (!res.ok || j.status !== 'ok') throw new Error(j.error || res.status); return j.data; }); })
+      .then(function (scene) { if (mine === hist.token) loadScene(scene); })
+      .catch(function (err) { if (mine === hist.token) toast('Could not load that run: ' + err.message); });
+  }, 160);
+}
+function histInit() {
+  // Only a page served over http can have a history behind it; opened from disk it has none and stays as it was.
+  if (!window.fetch || !/^https?:$/.test(location.protocol)) return;
+  fetch('api/history?limit=200', { headers: { Accept: 'application/json' } })
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (j) {
+      if (!j || j.status !== 'ok' || !j.data || !j.data.runs || !j.data.runs.length) return;
+      hist.runs = j.data.runs.slice().reverse(); hist.index = hist.runs.length - 1;
+      $('h-slider').oninput = function () { histGo(parseInt(this.value, 10)); };
+      $('h-prev').onclick = function () { histGo(hist.index - 1); };
+      $('h-next').onclick = function () { histGo(hist.index + 1); };
+      $('h-live').onclick = function () { histGo(hist.runs.length - 1); };
+      $('hist-bar').classList.remove('hidden');
+      histSync();
+    })
+    .catch(function () { /* no server behind the page: no history bar */ });
+}
+
 // ------------------------------------------------------------------ go
 resetPositions(true);
 applyTheme(savedTheme() || SCENE.meta.theme || 'auto', false);
@@ -2239,7 +2336,8 @@ buildHeader(); buildDiagnostics(); buildFindings(); buildLegend(); buildDiffBar(
 mmSetup();
 render(); fit();
 ready = true;
-window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, setTime: setTime, goTo: goTo, afterView: afterView, drawMinimap: drawMinimap, cleanSvg: cleanSvgText, spec: specText, buildSpec: buildSpec, cliRunbook: cliRunbook, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
+histInit();
+window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, loadScene: loadScene, histGo: histGo, setTime: setTime, goTo: goTo, afterView: afterView, drawMinimap: drawMinimap, cleanSvg: cleanSvgText, spec: specText, buildSpec: buildSpec, cliRunbook: cliRunbook, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
 })();
 </script>
 </body>

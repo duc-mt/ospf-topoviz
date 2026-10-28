@@ -18,8 +18,14 @@ adjacency stuck or gone, a lost neighbour. Everything that is valid but not idea
 shortest, a missing ECMP path, a route another protocol overrides, a stale route, an LSDB that lags
 behind a Full neighbour - is **info**: worth knowing, never an alarm.
 
-Limits (by design of the data collected): only Type 1/2 LSAs are read, so inter-area (Type 3) and
-external (Type 5/7) routes cannot be recomputed and are reported as "unverified". The RIB command only
+External routes: when the polls also read the external LSAs (``polling.external``), the routers that
+originate them are marked ASBRs with their prefixes, ``trace_prefix`` follows an external prefix to the
+ASBR(s) and prices it the way OSPF does (E1 adds the cost to the ASBR, E2 does not), and an ASBR that no
+polled router can reach, or that is not in the topology at all, is reported.
+
+Limits (by design of the data collected): inter-area (Type 3) routes cannot be recomputed, and the
+external routes of a router's RIB are not checked against the external LSAs, so both are reported as
+"unverified". The RIB command only
 lists OSPF routes, so a prefix absent from it can have been beaten by a lower-distance source, filtered, or
 never installed - the report says which of these are possible, it cannot tell them apart. FRR and Junos
 also print OSPF routes that lost to another source, and those *are* identified as overridden.
@@ -44,7 +50,9 @@ import networkx as nx
 from src import node_sort_key
 from src.vendors.base import (
     INTERNAL_ROUTE_TYPES,
+    ROUTE_E1,
     ROUTE_INTRA,
+    ROUTE_N1,
     UNKNOWN_AREA,
     OSPFRoute,
     SourceDetail,
@@ -82,6 +90,8 @@ NEXTHOP_MISMATCH = (
 ECMP_MISSING = "ECMP_MISSING"  # LSDB has more equal-cost paths than the RIB installed
 RIB_EMPTY = "RIB_EMPTY"  # routing table collected but empty
 AREA_UNPOLLED = "AREA_UNPOLLED"  # an OSPF area exists that no seed router covers (its part of the map is missing)
+ASBR_UNKNOWN = "ASBR_UNKNOWN"  # external LSAs come from a router that has no router LSA in the topology
+ASBR_UNREACHABLE = "ASBR_UNREACHABLE"  # a polled router has no path to an ASBR whose external routes it should use
 
 NEIGHBOR_KINDS = (
     ADJ_NOT_FULL,
@@ -1074,6 +1084,77 @@ def audit_area_coverage(
     )
 
 
+# ========================================================= external routes (ASBRs)
+def external_origins(graph: nx.DiGraph) -> dict[str, list[dict[str, Any]]]:
+    """``prefix -> [{node, kind, metric, metric_type, forwarding_address, tag, area}]``: the external routes
+    (Type 5 / Type 7 LSAs) the ASBRs of the topology inject. ``node`` is the ASBR's router ID."""
+    index: dict[str, list[dict[str, Any]]] = {}
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") != "router":
+            continue
+        for entry in attrs.get("externals") or ():
+            index.setdefault(entry["prefix"], []).append(
+                {
+                    "node": node,
+                    "kind": "external",
+                    "metric": entry["metric"],
+                    "metric_type": entry["metric_type"],
+                    "forwarding_address": entry.get("forwarding_address"),
+                    "tag": entry.get("tag"),
+                    "area": entry.get("area"),
+                }
+            )
+    return index
+
+
+def asbr_unknown_findings(graph: nx.DiGraph) -> list[Finding]:
+    """One info finding per router that advertises external routes but is not part of the topology.
+
+    Its external LSAs reach every router (Type 5 floods the whole domain) while its own router LSA lives in
+    an area nobody read, so SPF has no way to tell how far away it is. Needs nothing but the graph.
+    """
+    return [
+        Finding(
+            "route",
+            ASBR_UNKNOWN,
+            INFO,
+            asbr,
+            asbr,
+            f"{asbr} advertises external routes but has no router LSA in the topology",
+            "its area was probably not polled: add a seed router there (see the area coverage check)",
+        )
+        for asbr in graph.graph.get("external_unattached") or []
+    ]
+
+
+def asbr_findings(graph: nx.DiGraph, detail: SourceDetail) -> list[Finding]:
+    """A polled router that has no usable path to an ASBR cannot use that ASBR's external routes."""
+    router = detail.router_id
+    if not router or router not in graph:
+        return []
+    reachable = spf(graph, router).dist
+    findings = []
+    for node, attrs in graph.nodes(data=True):
+        externals = attrs.get("externals")
+        if not externals or node == router or node in reachable:
+            continue
+        findings.append(
+            Finding(
+                "route",
+                ASBR_UNREACHABLE,
+                WARNING,
+                router,
+                node,
+                f"{router} has no path to ASBR {node} in the LSDB: its {len(externals)} external route(s) "
+                "are unusable from there",
+                "the LSDB graph has no usable link towards this ASBR (a one-way link, a missing adjacency or "
+                "an area that was not polled)",
+                {"prefixes": [e["prefix"] for e in externals][:20]},
+            )
+        )
+    return findings
+
+
 # ================================================================ driver
 def correlate(
     graph: nx.DiGraph,
@@ -1096,11 +1177,13 @@ def correlate(
     report = CorrelationReport()
     report.area_coverage = audit_area_coverage(graph, details, seeds)
     report.findings += report.area_coverage.findings()
+    report.findings += asbr_unknown_findings(graph)
     if details:
         index = prefix_origins(graph)
         resolver = IpResolver(graph, details)
         for detail in details:
             report.findings += neighbor_findings(graph, detail)
+            report.findings += asbr_findings(graph, detail)
             found, check = route_findings(graph, detail, index, resolver)
             report.findings += found
             if detail.routes is not None and detail.router_id:
@@ -1136,6 +1219,8 @@ class TraceResult:
     paths: list[list[str]] = field(
         default_factory=list
     )  # equal-cost shortest paths, node IDs
+    #: For an external prefix: one entry per ASBR that advertises it (cost to the ASBR, total cost, selected?).
+    externals: list[dict[str, Any]] = field(default_factory=list)
     verdict: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -1143,6 +1228,75 @@ class TraceResult:
     def edges(self) -> set[frozenset]:
         """Node pairs along the paths, for highlighting on the diagram."""
         return {frozenset(p) for path in self.paths for p in pairwise(path)}
+
+
+def _trace_external(
+    result: TraceResult,
+    graph: nx.DiGraph,
+    source: str,
+    origins: list[dict[str, Any]],
+    detail: SourceDetail | None,
+) -> None:
+    """Fill ``result`` for an external prefix: which ASBR ``source`` sends it to, and at what cost.
+
+    The ASBRs are ranked as RFC 2328 section 16.4.1 does: type 1 (E1 / N1) before type 2, a type 1 route by
+    its total cost (cost to the ASBR plus the advertised metric), a type 2 route by its advertised metric and
+    then by the cost to the ASBR. ASBRs that tie are equal-cost alternatives.
+    """
+    tree = spf(graph, source)
+    ranked: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    result.origins = origins
+    for origin in origins:
+        asbr, kind = origin["node"], origin["metric_type"]
+        cost_to = tree.dist.get(asbr)
+        type1 = kind in (ROUTE_E1, ROUTE_N1)
+        total = None if cost_to is None else (cost_to + origin["metric"] if type1 else origin["metric"])
+        entry = {
+            "asbr": asbr,
+            "metric": origin["metric"],
+            "metric_type": kind,
+            "forwarding_address": origin["forwarding_address"],
+            "tag": origin["tag"],
+            "area": origin["area"],
+            "cost_to_asbr": cost_to,
+            "total_cost": total,
+            "reachable": cost_to is not None,
+            "selected": False,
+        }
+        result.externals.append(entry)
+        if cost_to is not None:
+            rank = (0, total, cost_to) if type1 else (1, origin["metric"], cost_to)
+            ranked.append((rank, entry))
+        if origin["forwarding_address"] not in (None, "0.0.0.0", "::"):
+            result.notes.append(
+                f"{asbr} advertises forwarding address {origin['forwarding_address']}: traffic is sent there, "
+                f"so the real cost is the cost to that address; the cost shown is to the ASBR"
+            )
+    if not ranked:
+        result.verdict = "ASBR unreachable in LSDB"
+        result.notes.append(
+            f"no polled path leads to the ASBR(s) that advertise {result.prefix}: "
+            + ", ".join(sorted({o["node"] for o in origins}, key=node_sort_key))
+        )
+        return
+    best_rank = min(rank for rank, _entry in ranked)
+    chosen = [entry for rank, entry in ranked if rank == best_rank]
+    for entry in chosen:
+        entry["selected"] = True
+        result.paths += tree.paths(entry["asbr"])
+    result.paths = result.paths[:8]
+    result.spf_cost = chosen[0]["total_cost"]
+    result.notes.append(
+        "external route: the path drawn leads to the ASBR; "
+        + ("type 1 adds the cost to the ASBR to the metric" if best_rank[0] == 0 else "type 2 ignores the cost to the ASBR except to break ties")
+    )
+    if result.rib is None:
+        collected = detail is not None and detail.routes is not None
+        result.verdict = "in LSDB, not in RIB" if collected else "external route in LSDB"
+    elif result.rib["metric"] is not None and result.rib["metric"] != result.spf_cost:
+        result.verdict = "RIB cost differs from SPF"
+    else:
+        result.verdict = "RIB and LSDB agree"
 
 
 def trace_prefix(
@@ -1200,8 +1354,26 @@ def trace_prefix(
         key=lambda p: ipaddress.ip_network(p).prefixlen,
         default=None,
     )
+    ext_index = external_origins(graph)
+    ext_best = max(
+        (p for p in ext_index if covers(p)),
+        key=lambda p: ipaddress.ip_network(p).prefixlen,
+        default=None,
+    )
+    # Longest prefix wins across every kind of route; at equal length an internal route beats an external one.
+    internal_len = max(
+        rib_best.prefix_length
+        if rib_best is not None and rib_best.route_type in INTERNAL_ROUTE_TYPES
+        else -1,
+        ipaddress.ip_network(lsdb_best).prefixlen if lsdb_best is not None else -1,
+    )
+    use_external = (
+        ext_best is not None and ipaddress.ip_network(ext_best).prefixlen > internal_len
+    )
 
-    if rib_best is not None and (
+    if use_external:
+        result.prefix = ext_best
+    elif rib_best is not None and (
         lsdb_best is None
         or rib_best.prefix_length >= ipaddress.ip_network(lsdb_best).prefixlen
     ):
@@ -1231,6 +1403,10 @@ def trace_prefix(
         result.notes.append(
             "no prefix in the OSPF routing table or the LSDB covers this address"
         )
+        return result
+
+    if use_external:
+        _trace_external(result, graph, source, ext_index[ext_best], detail)
         return result
 
     result.origins = index.get(result.prefix, [])

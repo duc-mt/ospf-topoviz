@@ -39,6 +39,15 @@ ENV_OVERRIDES = {
     "secret": "OSPF_MONITOR_SECRET",
 }
 
+#: Environment variables that override the embedded web server's settings (``--serve``).
+SERVER_ENV = {
+    "host": "OSPF_MONITOR_HOST",
+    "port": "OSPF_MONITOR_PORT",
+    "poll_interval": "OSPF_MONITOR_POLL_INTERVAL",
+}
+DEFAULT_SERVER_HOST = "127.0.0.1"
+DEFAULT_SERVER_PORT = 8080
+
 # The process ID is interpolated into CLI commands, so only a conservative character
 # set is accepted (numbers for IOS/Arista/Huawei, names for IOS-XR/NX-OS instance tags).
 _PROCESS_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -220,6 +229,59 @@ class SeedsOptions:
         if opts.timeout_per_device < 1:
             raise ConfigError("seeds.timeout_per_device must be 1 or greater")
         return opts
+
+
+@dataclass(frozen=True)
+class ServerOptions:
+    """Settings of the embedded web server (``--serve``; the ``server:`` block of settings.yaml).
+
+    The web server shows the topology and its history and can start a poll, but has no login: it listens on
+    the loopback address unless told otherwise, so put it behind something that authenticates before
+    binding it to a network address.
+    """
+
+    host: str = DEFAULT_SERVER_HOST
+    port: int = DEFAULT_SERVER_PORT
+    #: Seconds between polls the server starts by itself; 0 = poll only when asked (``POST /api/poll``).
+    poll_interval: int = 0
+
+    @classmethod
+    def from_settings(
+        cls, settings: dict[str, Any] | None, port: int | None = None
+    ) -> ServerOptions:
+        """Resolve each value as: the ``--port`` flag (port only), then the ``OSPF_MONITOR_*`` variable,
+        then ``server:`` in settings.yaml, then the default.
+
+        Raises:
+            ConfigError: If the section is not a mapping, the host is not a plausible host name or IP
+                address, the port is not 0-65535 or the interval is negative.
+        """
+        section = (settings or {}).get("server")
+        if section is None:
+            section = {}
+        if not isinstance(section, dict):
+            raise ConfigError("'server' in settings.yaml must be a mapping")
+
+        def pick(key: str, default: Any) -> Any:
+            env = os.environ.get(SERVER_ENV[key], "").strip()
+            if env:
+                return env
+            value = section.get(key)
+            return default if value is None or value == "" else value
+
+        host = str(pick("host", cls.host)).strip()
+        if not _HOST.match(host):
+            raise ConfigError(f"server.host {host!r} is not a valid host name or IP address")
+        try:
+            chosen_port = int(port if port is not None else pick("port", cls.port))
+            interval = int(pick("poll_interval", cls.poll_interval))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"server port and poll_interval must be whole numbers ({exc})") from exc
+        if not 0 <= chosen_port <= 65535:
+            raise ConfigError(f"The server port must be between 0 and 65535, got {chosen_port}")
+        if interval < 0:
+            raise ConfigError("server.poll_interval must not be negative (0 = poll only on request)")
+        return cls(host=host, port=chosen_port, poll_interval=interval)
 
 
 def parse_seed_hosts(text: str | None) -> list[str]:

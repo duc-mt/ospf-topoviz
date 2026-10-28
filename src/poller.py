@@ -46,6 +46,12 @@ from src.config import (
 )
 from src.vendors import VendorProfile, get_profile
 
+try:  # POSIX
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -54,6 +60,8 @@ __all__ = [
     "DevicePoller",
     "FilePoller",
     "MultiDevicePoller",
+    "PollBusyError",
+    "PollLock",
     "PollResult",
     "PollerAuthError",
     "PollerError",
@@ -81,6 +89,99 @@ class PollerAuthError(PollerError):
     """The device refused the credentials."""
 
 
+class PollBusyError(PollerError):
+    """Another poll (the CLI, a cron job or the web server) already holds the poll lock."""
+
+
+class PollLock:
+    """Non-blocking, cross-process lock that keeps two polls from running (and writing state) at once.
+
+    It is an advisory lock on a file (``data/.poll.lock``): ``flock`` on POSIX, ``msvcrt.locking`` on Windows.
+    The operating system drops it when the holder exits - even if it crashes - so the file never goes stale.
+    The holder's PID is written into the file for whoever wonders who has it.
+    """
+
+    def __init__(self, path: str | os.PathLike) -> None:
+        self.path = Path(path)
+        self._handle: Any = None
+
+    @property
+    def held(self) -> bool:
+        """True while this object holds the lock."""
+        return self._handle is not None
+
+    def acquire(self) -> bool:
+        """Take the lock without waiting; ``False`` if somebody else has it.
+
+        Raises:
+            PollerError: If the lock file cannot be opened (e.g. the data directory is not writable).
+        """
+        if self._handle is not None:
+            return True
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = self.path.open("a+")
+        except OSError as exc:
+            raise PollerError(
+                f"Could not open the poll lock {self.path}: {exc}"
+            ) from exc
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            handle.close()
+            return False
+        try:
+            handle.seek(0)
+            handle.truncate()
+            handle.write(f"{os.getpid()}\n")
+            handle.flush()
+        except OSError:  # the PID is a courtesy; the lock itself is held
+            logger.debug("Could not record the PID in %s", self.path)
+        self._handle = handle
+        return True
+
+    def release(self) -> None:
+        """Give the lock back (a no-op if it is not held)."""
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            handle.seek(0)
+            handle.truncate()  # no stale PID left behind
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            else:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            logger.debug("Could not unlock %s cleanly", self.path)
+        finally:
+            handle.close()
+
+    @classmethod
+    def is_held(cls, path: str | os.PathLike) -> bool:
+        """True if some other holder has the lock right now (a probe: it takes and drops the lock)."""
+        probe = cls(path)
+        if probe.acquire():
+            probe.release()
+            return False
+        return True
+
+    def __enter__(self) -> PollLock:
+        if not self.acquire():
+            raise PollBusyError(
+                f"Another poll is already running (lock {self.path}); this run was skipped"
+            )
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+
 @dataclass(frozen=True)
 class RawLSDB:
     """Raw, unparsed LSDB text as returned by a poller."""
@@ -91,6 +192,8 @@ class RawLSDB:
     collected_at: str  # ISO-8601 UTC timestamp
     neighbors: str = ""  # neighbour-table output ("" = not collected or not supported on this platform)
     routes: str = ""  # OSPF routing-table output ("" = not collected or not supported on this platform)
+    external: str = ""  # AS-External (Type 5) LSA output ("" = not collected or not supported on this platform)
+    nssa: str = ""  # NSSA-External (Type 7) LSA output ("" = not collected or not supported on this platform)
 
 
 class BasePoller(ABC):
@@ -119,6 +222,7 @@ class DevicePoller(BasePoller):
         collect_neighbors: bool = True,
         apply_env: bool = True,
         collect_routes: bool = True,
+        collect_external: bool = False,
     ) -> None:
         """Load and validate the settings.
 
@@ -129,6 +233,8 @@ class DevicePoller(BasePoller):
             device: One already-resolved router entry; skips reading settings.
             collect_neighbors: Also run the platform's neighbour-table command (best effort).
             collect_routes: Also run the platform's OSPF routing-table command (best effort).
+            collect_external: Also run the platform's AS-External (Type 5) and NSSA-External (Type 7) LSA
+                commands (best effort; off by default because they can print very large databases).
             apply_env: Let ``OSPF_MONITOR_*`` override the credentials (the single-device rule). Seed
                 entries are resolved by ``device_entries`` - own value, then environment - so it passes False.
 
@@ -209,6 +315,12 @@ class DevicePoller(BasePoller):
             self.commands["routes"] = self.profile.command(
                 "routes", self.process_id, overrides.get("routes")
             )
+        if collect_external:
+            for which in ("external", "nssa"):
+                if getattr(self.profile, which) is not None or overrides.get(which):
+                    self.commands[which] = self.profile.command(
+                        which, self.process_id, overrides.get(which)
+                    )
 
     @classmethod
     def from_settings(
@@ -237,6 +349,7 @@ class DevicePoller(BasePoller):
                 device=entry,
                 collect_neighbors=polling.neighbors,
                 collect_routes=polling.routes,
+                collect_external=polling.external,
                 apply_env=bool(entry.get("_legacy")),
             )
             for entry in entries
@@ -274,6 +387,8 @@ class DevicePoller(BasePoller):
                 # Extra detail only: never let it cost us the LSDB we already have.
                 neighbors = self._run_optional(conn, "neighbors", "neighbour table")
                 routes = self._run_optional(conn, "routes", "routing table")
+                external = self._run_optional(conn, "external", "external LSAs")
+                nssa = self._run_optional(conn, "nssa", "NSSA external LSAs")
         except NetmikoAuthenticationException as exc:
             raise PollerAuthError(
                 f"Authentication failed for {self.host}: check username, password and enable secret"
@@ -301,6 +416,8 @@ class DevicePoller(BasePoller):
             collected_at=datetime.now(UTC).isoformat(timespec="seconds"),
             neighbors=neighbors,
             routes=routes,
+            external=external,
+            nssa=nssa,
         )
 
     def _run_optional(self, conn: Any, key: str, what: str) -> str:
@@ -347,6 +464,8 @@ class FilePoller(BasePoller):
     NETWORK_FILE = "network_lsdb.txt"
     NEIGHBORS_FILE = "neighbors.txt"
     ROUTES_FILE = "routes.txt"
+    EXTERNAL_FILE = "external_lsdb.txt"
+    NSSA_FILE = "nssa_lsdb.txt"
 
     def __init__(
         self,
@@ -380,7 +499,8 @@ class FilePoller(BasePoller):
                 raise PollerError(f"Could not read replay file {path}: {exc}") from exc
 
     def poll(self) -> RawLSDB:
-        """Read ``router_lsdb.txt`` (required); ``network_lsdb.txt``, ``neighbors.txt`` and ``routes.txt`` are optional."""
+        """Read ``router_lsdb.txt`` (required); the other files (``network_lsdb.txt``, ``neighbors.txt``,
+        ``routes.txt``, ``external_lsdb.txt`` and ``nssa_lsdb.txt``) are optional."""
         router_path = self.directory / self.ROUTER_FILE
         network_path = self.directory / self.NETWORK_FILE
 
@@ -390,6 +510,8 @@ class FilePoller(BasePoller):
         network = self._read_with_timeout(network_path)
         neighbors = self._read_with_timeout(self.directory / self.NEIGHBORS_FILE)
         routes = self._read_with_timeout(self.directory / self.ROUTES_FILE)
+        external = self._read_with_timeout(self.directory / self.EXTERNAL_FILE)
+        nssa = self._read_with_timeout(self.directory / self.NSSA_FILE)
 
         return RawLSDB(
             router=router,
@@ -398,6 +520,8 @@ class FilePoller(BasePoller):
             collected_at=datetime.now(UTC).isoformat(timespec="seconds"),
             neighbors=neighbors,
             routes=routes,
+            external=external,
+            nssa=nssa,
         )
 
 
@@ -411,6 +535,7 @@ class PollingOptions:
     )
     neighbors: bool = True  # also read each router's neighbour table (adjacency state, interface names)
     routes: bool = True  # also read each router's OSPF routing table (to check it against the LSDB)
+    external: bool = False  # also read the AS-External (Type 5) / NSSA-External (Type 7) LSAs: off, they can be huge
 
     @classmethod
     def from_settings(cls, section: dict[str, Any] | None) -> PollingOptions:
@@ -425,6 +550,7 @@ class PollingOptions:
                 require_all=bool(section.get("require_all", False)),
                 neighbors=bool(section.get("neighbors", True)),
                 routes=bool(section.get("routes", True)),
+                external=bool(section.get("external", False)),
             )
         except (TypeError, ValueError) as exc:
             raise ConfigError(

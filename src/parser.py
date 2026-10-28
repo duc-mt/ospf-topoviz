@@ -29,6 +29,7 @@ from src.vendors.base import (
     KIND_STUB,
     KIND_TRANSIT,
     KIND_VIRTUAL,
+    ExternalLsa,
     Lsdb,
     NetworkLsa,
     ParserError,
@@ -75,7 +76,8 @@ def _area_key(area: str) -> str:
 
 
 def _is_newer(
-    candidate: RouterLsa | NetworkLsa, current: RouterLsa | NetworkLsa
+    candidate: RouterLsa | NetworkLsa | ExternalLsa,
+    current: RouterLsa | NetworkLsa | ExternalLsa,
 ) -> bool:
     """True if ``candidate`` is a more recent instance of the same LSA than ``current``.
 
@@ -107,17 +109,28 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
     areas are different LSAs and are all kept - an ABR legitimately has one router LSA per area. The links
     of two copies are never unioned: that would resurrect links a newer instance has withdrawn.
 
+    External LSAs (Type 5 and Type 7) are merged the same way. A Type 5 LSA is domain-wide, so it is
+    identified by ``(advertising router, prefix)``; a Type 7 LSA lives in one NSSA, so its area is part of
+    the identity. Seeds that read no external LSAs simply contribute none.
+
     The result shares its LSA objects with the inputs, which are not modified. ``router_id`` is only set
     when there is a single input (a merged view has no single router).
 
     Raises:
-        ParserError: If ``lsdbs`` is empty.
+        ParserError: If ``lsdbs`` is empty, or mixes OSPFv2 (IPv4) and OSPFv3 (IPv6) databases.
     """
     if not lsdbs:
         raise ParserError("Nothing to merge: no LSDB was given")
+    versions = sorted({lsdb.ip_version for lsdb in lsdbs})
+    if len(versions) > 1:
+        raise ParserError(
+            "Cannot merge OSPFv2 (IPv4) and OSPFv3 (IPv6) databases into one topology"
+        )
 
     routers: dict[tuple[str, str], RouterLsa] = {}
     networks: dict[tuple[str, str, str], NetworkLsa] = {}
+    externals: dict[tuple[str, str], ExternalLsa] = {}
+    nssa: dict[tuple[str, str, str], ExternalLsa] = {}
     seen = 0
     for lsdb in lsdbs:
         for lsa in lsdb.router_lsas:
@@ -134,19 +147,45 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
             current = networks.get(key)
             if current is None or _is_newer(lsa, current):
                 networks[key] = lsa if lsa.area == area else replace(lsa, area=area)
+        for lsa in lsdb.external_lsas:
+            seen += 1
+            current = externals.get((lsa.adv_router, lsa.prefix))
+            if current is None or _is_newer(lsa, current):
+                externals[(lsa.adv_router, lsa.prefix)] = lsa
+        for lsa in lsdb.nssa_lsas:
+            seen += 1
+            area = _area_key(lsa.area) if lsa.area is not None else ""
+            key = (lsa.adv_router, lsa.prefix, area)
+            current = nssa.get(key)
+            if current is None or _is_newer(lsa, current):
+                nssa[key] = (
+                    lsa if lsa.area in (None, area) else replace(lsa, area=area)
+                )
 
     merged = Lsdb(
         router_lsas=list(routers.values()),
         network_lsas=list(networks.values()),
         process_ids=sorted({pid for lsdb in lsdbs for pid in lsdb.process_ids}),
         router_id=lsdbs[0].router_id if len(lsdbs) == 1 else None,
+        external_lsas=list(externals.values()),
+        nssa_lsas=list(nssa.values()),
+        ip_version=versions[0],
+    )
+    kept = (
+        len(merged.router_lsas)
+        + len(merged.network_lsas)
+        + len(merged.external_lsas)
+        + len(merged.nssa_lsas)
     )
     logger.info(
-        "Merged %d LSDB(s): %d router + %d network LSAs (%d duplicate(s) collapsed)",
+        "Merged %d LSDB(s): %d router + %d network + %d external (Type 5) + %d NSSA (Type 7) LSAs "
+        "(%d duplicate(s) collapsed)",
         len(lsdbs),
         len(merged.router_lsas),
         len(merged.network_lsas),
-        seen - len(merged.router_lsas) - len(merged.network_lsas),
+        len(merged.external_lsas),
+        len(merged.nssa_lsas),
+        seen - kept,
     )
     return merged
 
@@ -194,23 +233,56 @@ class OSPFParser(BaseParser):
         """Parse an OSPF routing table into ``OSPFRoute`` records; ``None`` if this platform has no parser."""
         return self.adapter.parse_routes(raw_routes, self.process_id)
 
-    def parse_lsdb(self, raw_router: str, raw_network: str = "") -> Lsdb:
-        """Parse raw router and network text into a neutral Lsdb model."""
+    def parse_external(
+        self, raw_external: str = "", raw_nssa: str = ""
+    ) -> tuple[list[ExternalLsa], list[ExternalLsa]]:
+        """Parse the AS-External (Type 5) and NSSA-External (Type 7) outputs into ``(type5, type7)``.
+
+        Empty text yields empty lists, and so does a platform without an external-LSA parser.
+        """
+        if not (raw_external.strip() or raw_nssa.strip()):
+            return [], []
+        return self.adapter.parse_external(raw_external, raw_nssa, self.process_id)
+
+    def parse_lsdb(
+        self,
+        raw_router: str,
+        raw_network: str = "",
+        raw_external: str = "",
+        raw_nssa: str = "",
+    ) -> Lsdb:
+        """Parse raw router and network text (and, if given, the external LSA text) into a neutral Lsdb model.
+
+        External LSAs are extra detail: text that cannot be read is logged and left out, it never fails the
+        parse of the router and network LSAs.
+        """
         lsdb = self.adapter.parse(raw_router, raw_network, self.process_id)
         if not lsdb.router_lsas:
             hint = ""
             if self.process_id is not None:
                 hint = f" for OSPF process {self.process_id} (process IDs in output: {lsdb.process_ids or 'none'})"
             raise ParserError(f"No router (Type 1) LSAs found{hint}")
+        try:
+            lsdb.external_lsas, lsdb.nssa_lsas = self.parse_external(
+                raw_external, raw_nssa
+            )
+        except ParserError as exc:
+            logger.warning("External LSAs ignored: %s", exc)
         return lsdb
 
-    def parse(self, raw_router: str, raw_network: str = "") -> dict[str, Any]:
+    def parse(
+        self,
+        raw_router: str,
+        raw_network: str = "",
+        raw_external: str = "",
+        raw_nssa: str = "",
+    ) -> dict[str, Any]:
         """Parse raw LSDB text into the standardized topology dictionary.
 
         Raises:
             ParserError: If the platform parser fails or the output holds no router LSAs.
         """
-        lsdb = self.parse_lsdb(raw_router, raw_network)
+        lsdb = self.parse_lsdb(raw_router, raw_network, raw_external, raw_nssa)
         return self.build_topology(lsdb, {"device_type": self.device_type})
 
     @classmethod
@@ -228,6 +300,9 @@ class OSPFParser(BaseParser):
 
         * ``lsa_age`` / ``stale`` on nodes whose LSA has not been refreshed for ``stale_age`` seconds
         * ``abr`` / ``asbr`` on routers that say they are area border / AS boundary routers
+        * ``is_asbr`` and ``externals`` on routers that originate Type 5 / Type 7 LSAs: the prefixes they inject
+          into OSPF. These stay attributes of the router - they add no node or link, so the shortest-path
+          calculation over the topology is not touched.
         * ``link_state`` (``one-way`` / ``unverified``) on links the far end does not advertise back
         * ``interface`` on links, and ``adjacency_issues`` in the metadata, from neighbour tables
 
@@ -290,6 +365,8 @@ class OSPFParser(BaseParser):
                 cls._upsert_node(nodes, attached, "router", lsa.area)
                 cls._add_edge(edges, net_id, attached, 0, "attachment", lsa.area)
 
+        external_counts = cls._attach_externals(nodes, lsdb, maxage_age)
+
         unresolved = sorted(n["id"] for n in nodes.values() if not n["resolved"])
         if unresolved:
             logger.info(
@@ -311,6 +388,8 @@ class OSPFParser(BaseParser):
             node["areas"] = sorted(node["areas"])
             if "prefixes" in node:
                 node["prefixes"].sort(key=lambda e: (e["prefix"], e["area"]))
+            if "externals" in node:
+                node["externals"].sort(key=lambda e: (e["prefix"], e["metric_type"]))
         meta = {
             "device_type": cls.__name__,
             "ospf_process_ids": lsdb.process_ids,
@@ -325,7 +404,14 @@ class OSPFParser(BaseParser):
             "one_way_links": one_way,
             "unverified_links": unverified,
             "adjacency_issues": issues,
+            "ip_version": lsdb.ip_version,
         }
+        if external_counts["type5"] or external_counts["type7"]:
+            meta.update(
+                external_lsas=external_counts["type5"],
+                nssa_lsas=external_counts["type7"],
+                external_unattached=external_counts["unattached"],
+            )
         snapshot = cls._neighbor_snapshot(details)
         if snapshot:
             meta["neighbors"] = snapshot
@@ -340,6 +426,45 @@ class OSPFParser(BaseParser):
                 )
             ],
         }
+
+    @staticmethod
+    def _attach_externals(
+        nodes: dict[str, dict], lsdb: Lsdb, limit: int
+    ) -> dict[str, Any]:
+        """Record the external prefixes on the router that originates them and flag it ``is_asbr``.
+
+        LSAs at age ``limit`` or more are being flushed and are skipped, like the router and network LSAs.
+        An external LSA whose advertising router is not a router of this topology (it was never polled, or
+        its router LSA is gone) cannot be tied to a node: it is counted and its router listed under
+        ``unattached`` instead of inventing a node that no Type 1 LSA describes.
+        """
+        counts: dict[str, Any] = {"type5": 0, "type7": 0, "unattached": []}
+        unattached: set[str] = set()
+        for key, lsas in (("type5", lsdb.external_lsas), ("type7", lsdb.nssa_lsas)):
+            for lsa in sorted(
+                lsas, key=lambda x: (node_sort_key(x.adv_router), x.prefix)
+            ):
+                if limit and lsa.age is not None and lsa.age >= limit:
+                    continue
+                counts[key] += 1
+                node = nodes.get(lsa.adv_router)
+                if node is None or node["type"] != "router":
+                    unattached.add(lsa.adv_router)
+                    continue
+                node["is_asbr"] = True
+                node.setdefault("externals", []).append(
+                    {
+                        "prefix": lsa.prefix,
+                        "metric": lsa.metric,
+                        "metric_type": lsa.metric_type,
+                        "forwarding_address": lsa.forwarding_address,
+                        "tag": lsa.tag,
+                        "area": lsa.area,
+                        "age": lsa.age,
+                    }
+                )
+        counts["unattached"] = sorted(unattached, key=node_sort_key)
+        return counts
 
     @classmethod
     def _split_flushing(
