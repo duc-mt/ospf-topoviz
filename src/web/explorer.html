@@ -195,7 +195,19 @@ details.group>summary .pill{margin-left:6px}
 @keyframes simpulse{0%{transform:scale(.55);opacity:.9}100%{transform:scale(1.8);opacity:0}}
 .sim-blue{animation:simflow .9s linear infinite}
 @media (prefers-reduced-motion:reduce){.sim-pulse,.sim-blue{animation:none}#vp.smooth,#canvas .node,#canvas .link,#sel{transition:none}}
-@media print{#minimap,#hotkeys,#diff-bar,#hist-bar,#sel,#search-results{display:none}}
+@media print{#minimap,#hotkeys,#diff-bar,#hist-bar,#mon-drawer,#sel,#search-results{display:none}}
+#mon-drawer{position:absolute;z-index:8;left:14px;right:190px;bottom:146px;max-height:320px;display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.22)}
+#mon-drawer.hidden,#btn-events.hidden{display:none}
+#mon-drawer .mon-hdr{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#mon-drawer .mon-hdr input,#mon-drawer .mon-hdr select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 7px;color:var(--text);font-size:12px}
+#mon-drawer .mon-hdr input{flex:1;min-width:140px}
+#mon-histogram{display:block;width:100%;height:56px;background:var(--panel2);border:1px solid var(--line);border-radius:6px}
+.mon-tbl-wrap{overflow:auto;max-height:190px;border:1px solid var(--line);border-radius:6px}
+.mon-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.mon-tbl th,.mon-tbl td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left}
+.mon-tbl th{position:sticky;top:0;background:var(--panel2);font-weight:700;color:var(--muted)}
+.mon-tbl tr.ev-row{cursor:pointer}
+.mon-tbl tr.ev-row:hover{background:var(--hover)}
 </style>
 </head>
 <body>
@@ -205,6 +217,7 @@ details.group>summary .pill{margin-left:6px}
   <button id="b-search" title="Search (/)">Search</button>
   <button id="b-filter" title="Filters and display options">Filter</button>
   <button id="b-sim" title="What-if simulation: shut links or routers, change costs, drain a router - nothing is sent to any device">Simulate</button>
+  <button id="btn-events" class="hidden" title="Live Topology Events &amp; Histogram">Events <span id="mon-badge" class="pill info">0</span></button>
   <button id="b-side" title="Show / hide the sidebar">Panel</button>
   <button id="b-theme" title="Theme">&#x25D0;</button>
   <button id="b-full" title="Full screen">&#x26F6;</button>
@@ -238,6 +251,7 @@ details.group>summary .pill{margin-left:6px}
       <button id="sim-swap" title="Swap source and target">&#8644;</button>
       <label>Target B <select id="sim-b"></select></label>
       <span class="sim-metrics" id="sim-metrics"></span>
+      <label id="sim-srlg-wrap" style="display:none">Fail SRLG <select id="sim-srlg"><option value="">-- add SRLG --</option></select></label>
       <button id="sim-reset" title="Undo every simulated change and show the real network again">Reset Simulation</button>
       <button id="sim-exit" title="Leave simulation mode (discards the simulated changes)">Exit</button>
       <div id="sim-diff"></div>
@@ -265,6 +279,41 @@ details.group>summary .pill{margin-left:6px}
       <button id="h-next" type="button" title="Next (newer) run" aria-label="Newer run">&#9654;</button>
       <button id="h-live" type="button" title="Back to the latest run">Latest</button>
       <span id="h-label" aria-live="polite"></span>
+    </div>
+    <div id="mon-drawer" class="hidden" role="region" aria-label="Topology event log and histogram">
+      <div class="mon-hdr">
+        <b>Topology Events</b>
+        <select id="mon-type" aria-label="Event type">
+          <option value="">All types</option>
+          <option value="link_up">link_up</option>
+          <option value="link_down">link_down</option>
+          <option value="link_cost_changed">link_cost_changed</option>
+          <option value="network_up">network_up</option>
+          <option value="network_down">network_down</option>
+          <option value="network_cost_changed">network_cost_changed</option>
+          <option value="node_added">node_added</option>
+          <option value="node_removed">node_removed</option>
+          <option value="node_flag_changed">node_flag_changed</option>
+          <option value="te_changed">te_changed</option>
+          <option value="finding_raised">finding_raised</option>
+          <option value="finding_resolved">finding_resolved</option>
+        </select>
+        <select id="mon-status" aria-label="Object status">
+          <option value="">All statuses</option>
+          <option value="up">up</option>
+          <option value="down">down</option>
+          <option value="changed">changed</option>
+          <option value="raised">raised</option>
+          <option value="resolved">resolved</option>
+        </select>
+        <input id="mon-search" type="search" placeholder="Filter router, prefix, text&hellip;" autocomplete="off">
+        <button id="mon-refresh" type="button">Refresh</button>
+        <button id="mon-close" type="button" title="Close">&times;</button>
+      </div>
+      <svg id="mon-histogram" width="100%" height="56" aria-label="Event histogram"></svg>
+      <div class="mon-tbl-wrap">
+        <table class="mon-tbl"><thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Object</th><th>Router</th><th>Summary</th></tr></thead><tbody id="mon-tbody"></tbody></table>
+      </div>
     </div>
     <canvas id="minimap" width="160" height="100" aria-label="Minimap radar" title="Minimap: click or drag to move the view"></canvas>
     <div id="hotkeys"><span class="hk">[ / ]</span> Search &nbsp;&middot;&nbsp; <span class="hk">[ F ]</span> Fit &nbsp;&middot;&nbsp; <span class="hk">[ S ]</span> Simulate &nbsp;&middot;&nbsp; <span class="hk">[ Esc ]</span> Deselect</div>
@@ -383,14 +432,22 @@ function resetPositions(useSaved) {
 // ------------------------------------------------------------------ what-if engine (pure: no DOM, no page state)
 /* SIM-ENGINE:BEGIN - tests/js/test_simulation.js runs exactly this block, so keep it free of page globals */
 var SIM_MAX_METRIC = 65535, SIM_PATH_LIMIT = 16;
-var SIM_NONE = { disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set() };
+var SIM_NONE = { disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set(), disabledSrlgs: new Set() };
 var simDefaultModel = null;
 function simSetModel(model) { simDefaultModel = model; }
 function simMods(m) {
   m = m || {};
   return { disabledLinks: m.disabledLinks || SIM_NONE.disabledLinks, disabledNodes: m.disabledNodes || SIM_NONE.disabledNodes,
-    costOverrides: m.costOverrides || SIM_NONE.costOverrides, drainedNodes: m.drainedNodes || SIM_NONE.drainedNodes };
+    costOverrides: m.costOverrides || SIM_NONE.costOverrides, drainedNodes: m.drainedNodes || SIM_NONE.drainedNodes,
+    disabledSrlgs: m.disabledSrlgs || SIM_NONE.disabledSrlgs };
 }
+function simToggleSrlg(state, srlgId) {
+  var st = state || {};
+  if (!st.disabledSrlgs) st.disabledSrlgs = new Set();
+  if (st.disabledSrlgs.has(srlgId)) st.disabledSrlgs.delete(srlgId); else st.disabledSrlgs.add(srlgId);
+  return st;
+}
+function simLinkSrlgs(l) { return (l && (l.srlgs || (l.te && l.te.srlgs))) ? (l.srlgs || l.te.srlgs).slice() : []; }
 
 // What the SPF pays to cross a link in each direction (null = it cannot). The exporter computes this with the rules of the
 // Python SPF; for a scene without it, derive the same numbers from the link ends.
@@ -416,7 +473,7 @@ function makeGraphModel(scene) {
     [['ab', l.a, l.b], ['ba', l.b, l.a]].forEach(function (d) {
       var c = costs[d[0]];
       if (typeof c !== 'number' || !nodes[d[1]] || !nodes[d[2]]) return;
-      var e = { id: edges.length, link: l.id, par: l.parallel || 1, dir: d[0], from: d[1], to: d[2], cost: c, attach: nodes[d[1]].kind !== 'router' && nodes[d[2]].kind === 'router' };
+      var e = { id: edges.length, link: l.id, par: l.parallel || 1, dir: d[0], from: d[1], to: d[2], cost: c, srlgs: simLinkSrlgs(l), attach: nodes[d[1]].kind !== 'router' && nodes[d[2]].kind === 'router' };
       edges.push(e); out[d[1]].push(e.id); byLink[l.id].push(e.id);
     });
   });
@@ -426,6 +483,7 @@ function makeGraphModel(scene) {
 // The cost of an edge under the simulated changes, or null when the edge is out of service.
 function simEdgeCost(e, mods) {
   if (mods.disabledLinks.has(e.link) || mods.disabledNodes.has(e.from) || mods.disabledNodes.has(e.to)) return null;
+  if (mods.disabledSrlgs && mods.disabledSrlgs.size && e.srlgs && e.srlgs.some(function (s) { return mods.disabledSrlgs.has(s); })) return null;
   var c = e.cost, ov = mods.costOverrides.get(e.link);
   if (ov && !e.attach) { var v = e.dir === 'ab' ? ov.forwardCost : ov.reverseCost; if (typeof v === 'number') c = v; }
   // max-metric router LSA (RFC 3137): the router advertises 65535 on its own links, so nobody routes *through* it
@@ -519,7 +577,7 @@ function simSummary(res, target) {
 function simKey(p) { return p.nodes.join('>'); }
 function simKeys(paths, reversed) { return paths.map(function (p) { return reversed ? p.nodes.slice().reverse().join('>') : simKey(p); }).sort(); }
 function simSameList(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
-function simChangeCount(s) { return s.disabledLinks.size + s.disabledNodes.size + s.costOverrides.size + (s.drainedNodes ? s.drainedNodes.size : 0); }
+function simChangeCount(s) { return s.disabledLinks.size + s.disabledNodes.size + s.costOverrides.size + (s.drainedNodes ? s.drainedNodes.size : 0) + (s.disabledSrlgs ? s.disabledSrlgs.size : 0); }
 
 // What the simulated changes do to the traffic from A to B (and back), plus every router A can no longer reach.
 function simAnalyze(model, state) {
@@ -1379,13 +1437,17 @@ function overviewTab(s) {
   if (s.type === 'link') {
     var l = links[s.id], h = '';
     h += '<div>' + statePill(l.state) + (l.status ? ' ' + pill('info', l.status.toUpperCase()) : '') + (l.oneWay ? ' ' + pill('warn', 'ONE-WAY') : '') + (l.unverified ? ' ' + pill('warn', 'UNVERIFIED') : '') + '</div>';
+    var te = l.te || {}, srlgIds = (l.srlgs && l.srlgs.length) ? l.srlgs.join(', ') : '';
+    var bwTxt = te.max_bw_bps ? (te.max_bw_bps >= 1e9 ? (te.max_bw_bps / 1e9).toFixed(1) + ' Gbps' : (te.max_bw_bps / 1e6).toFixed(0) + ' Mbps') : '';
     h += kv([['From', nodeLabel(l.a)], ['To', nodeLabel(l.b)], ['Type', l.kind === 'segment' ? 'Transit segment' : 'Point-to-point'], ['Parallel', l.parallel > 1 ? '[' + l.parallel + 'x]' : ''],
-      ['Cost ' + nodeLabel(l.a) + ' \u2192 ' + nodeLabel(l.b), (endOf(l, l.a) ? String(endCost(endOf(l, l.a))) : ''), 0], ['Cost ' + nodeLabel(l.b) + ' \u2192 ' + nodeLabel(l.a), (endOf(l, l.b) ? String(endCost(endOf(l, l.b))) : ''), 0]]);
+      ['Cost ' + nodeLabel(l.a) + ' \u2192 ' + nodeLabel(l.b), (endOf(l, l.a) ? String(endCost(endOf(l, l.a))) : ''), 0], ['Cost ' + nodeLabel(l.b) + ' \u2192 ' + nodeLabel(l.a), (endOf(l, l.b) ? String(endCost(endOf(l, l.b))) : ''), 0],
+      ['TE metric', te.te_metric != null ? String(te.te_metric) : ''], ['Max BW', bwTxt], ['Admin group', te.admin_groups != null ? '0x' + te.admin_groups.toString(16) : ''], ['SRLGs', srlgIds]]);
     return h;
   }
   var n = nodes[s.id], fs = findingsOf(n.id).slice(0, 6), dr = (n.sub || []).filter(function (t) { return /^DR /.test(t); })[0];
-  var html = '<div>' + nodeHealth(n) + (n.role ? ' <span class="pill info">' + esc(n.role) + '</span>' : '') + (n.status ? ' ' + pill('info', n.status.toUpperCase()) : '') + '</div>';
+  var html = '<div>' + nodeHealth(n) + (n.role ? ' <span class="pill info">' + esc(n.role) + '</span>' : '') + (n.max_metric ? ' ' + pill('warn', 'MAX-METRIC') : '') + (n.status ? ' ' + pill('info', n.status.toUpperCase()) : '') + '</div>';
   html += kv([['Name', n.title], [n.kind === 'router' ? 'Router ID' : 'Network', n.kind === 'router' ? n.id : (n.prefix || n.id)], ['Role / tier', n.kind === 'router' ? (n.role || 'Router') + (n.areas.length ? ' \u00b7 area ' + n.areas.join(', ') : '') : (n.kind === 'ghost' ? 'Network (no LSA)' : 'Transit network' + (dr ? ' (' + dr + ')' : ''))],
+    ['Max-metric areas', n.max_metric_areas && n.max_metric_areas.length ? n.max_metric_areas.join(', ') : ''],
     ['Vendor', n.kind === 'router' ? (SCENE.meta.device_type ? vendorName(guessVendor(SCENE.meta.device_type)) || SCENE.meta.device_type : '') : ''], ['OS version', n.kind === 'router' ? 'not collected by the OSPF poll' : ''],
     ['LSA age', n.age != null ? n.age + ' s' : ''], ['Links', String((adj[n.id] || []).length)], ['Prefixes', n.prefix_count ? String(n.prefix_count) : ''],
     ['External routes', n.external_count ? n.external_count + ' \u2014 ' + (n.externals || []).slice(0, 3).map(function (e) { return e.prefix + ' ' + e.metric_type + '/' + e.metric; }).join(', ') + (n.external_count > 3 ? ', \u2026' : '') : ''],
@@ -1898,7 +1960,7 @@ if (media) {
 // ------------------------------------------------------------------ what-if simulation (browser memory only: nothing is written anywhere)
 var GM = makeGraphModel(SCENE);
 simSetModel(GM);
-var sim = { active: false, disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set(), sourceNode: null, targetNode: null };
+var sim = { active: false, disabledLinks: new Set(), disabledNodes: new Set(), costOverrides: new Map(), drainedNodes: new Set(), disabledSrlgs: new Set(), sourceNode: null, targetNode: null };
 var simRes = null, simMs = 0, simDrain = null, simBlastRes = null;
 function blastState(id) { var s = simBlastRes && simBlastRes.state[id]; return s === 'stranded' ? 'isolated' : (s || ''); }
 var gSimFx = $('simfx'), gSimTop = $('simtop'), popEl = $('sim-pop'), popAt = null;
@@ -1935,7 +1997,7 @@ function simSetCost(id, dir, value) {
 function simClearCost(id) { sim.costOverrides.delete(id); simRefresh(); }
 function simReset() {
   var n = simChangeCount(sim);
-  sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); simDrain = null;
+  sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); sim.disabledSrlgs.clear(); simDrain = null;
   closeSimPopover(); simRefresh();
   toast(n ? 'Simulation reset: the real network is shown again' : 'Nothing to reset');
 }
@@ -1945,7 +2007,7 @@ function simSetActive(on) {
   if (on && state.time !== 'current' && SCENE.diagnostics.changes.baseline) { state.time = 'current'; render(); }
   sim.active = on;
   syncDiffBar();
-  if (!on) { sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); sim.sourceNode = sim.targetNode = null; simDrain = null; closeSimPopover(); }
+  if (!on) { sim.disabledLinks.clear(); sim.disabledNodes.clear(); sim.costOverrides.clear(); sim.drainedNodes.clear(); sim.disabledSrlgs.clear(); sim.sourceNode = sim.targetNode = null; simDrain = null; closeSimPopover(); }
   $('b-sim').classList.toggle('on', on);
   $('sim-bar').classList.toggle('on', on);
   simRefresh();
@@ -2021,6 +2083,7 @@ function renderSimBar() {
   sim.disabledLinks.forEach(function (id) { add('Link down: ' + simLinkName(links[id]), function () { simToggleLink(id); }); });
   sim.disabledNodes.forEach(function (id) { add('Node down: ' + simTitle(id), function () { simToggleNode(id); }); });
   sim.drainedNodes.forEach(function (id) { add('Drain: ' + simTitle(id) + ' (max-metric ' + SIM_MAX_METRIC + ')', function () { simToggleDrain(id); }); });
+  sim.disabledSrlgs.forEach(function (sid) { add('SRLG down: ' + sid, function () { simToggleSrlg(sim, sid); simRefresh(); }); });
   sim.costOverrides.forEach(function (ov, id) {
     var l = links[id];
     simTunable(l).forEach(function (e) { var v = simOverride(l, e); if (typeof v === 'number') add('Cost ' + simTitle(e.from) + ' \u2192 ' + simTitle(e.to) + ': ' + e.cost + ' \u2192 ' + v, function () { simClearCost(id); }); });
@@ -2064,9 +2127,14 @@ function simPill(parent, x, y, deg, text, edge, cls) {
   t.textContent = text;
   return g;
 }
+function simLinkDisabled(l) {
+  if (sim.disabledLinks.has(l.id)) return true;
+  if (!sim.disabledSrlgs || !sim.disabledSrlgs.size) return false;
+  return simLinkSrlgs(l).some(function (id) { return sim.disabledSrlgs.has(id); });
+}
 function drawSimFx() {
   gSimFx.textContent = gSimTop.textContent = '';
-  model.links.forEach(function (l) { if (l.el && !l.virtual) l.el.vis.setAttribute('stroke-opacity', sim.active && sim.disabledLinks.has(l.id) ? .12 : linkStyle(l).opacity); });
+  model.links.forEach(function (l) { if (l.el && !l.virtual) l.el.vis.setAttribute('stroke-opacity', sim.active && simLinkDisabled(l) ? .12 : linkStyle(l).opacity); });
   if (!sim.active || !simRes) return;
   var r = simRes, k = state.view.k, visible = {}, mnode = {};
   model.links.forEach(function (l) { if (!l.virtual && l.geo) visible[l.id] = 1; });
@@ -2096,7 +2164,7 @@ function drawSimFx() {
   model.links.forEach(function (l) {
     if (l.virtual || !l.geo) return;
     var e = l.geo, mx = (e.pa.x + e.pb.x) / 2, my = (e.pa.y + e.pb.y) / 2, deg = e.ang * 180 / Math.PI;
-    if (sim.disabledLinks.has(l.id)) {
+    if (simLinkDisabled(l)) {
       simLine(gSimFx, [e.pa, e.pb], { stroke: C.simBad, 'stroke-width': 3.4, 'stroke-dasharray': '9 6' }, 'sim-disabled');
       var g = svg('g', { 'class': 'sim-disabled' }, gSimTop);
       svg('circle', { cx: mx, cy: my, r: rad, fill: C.pillBg, stroke: C.simBad, 'stroke-width': 2 }, g);
@@ -2245,12 +2313,26 @@ function simFillSelects() {   // the router lists of the two pickers (again afte
     var o = document.createElement('option'); o.value = ''; o.textContent = '\u2014 pick a router \u2014'; sel.appendChild(o);
     GM.routers.slice().sort(function (x, y) { return simTitle(x) < simTitle(y) ? -1 : 1; }).forEach(function (id) { var e = document.createElement('option'); e.value = id; e.textContent = simTitle(id); sel.appendChild(e); });
   });
+  var srlgWrap = $('sim-srlg-wrap'), srlgSel = $('sim-srlg');
+  if (srlgWrap && srlgSel) {
+    var srlgs = (SCENE.meta && SCENE.meta.srlgs) || [];
+    srlgSel.textContent = '';
+    var d0 = document.createElement('option'); d0.value = ''; d0.textContent = '-- toggle SRLG --'; srlgSel.appendChild(d0);
+    srlgs.forEach(function (id) { var opt = document.createElement('option'); opt.value = String(id); opt.textContent = 'SRLG ' + id; srlgSel.appendChild(opt); });
+    srlgWrap.style.display = srlgs.length ? 'inline-flex' : 'none';
+  }
 }
 (function () {
-  var a = $('sim-a'), b = $('sim-b');
+  var a = $('sim-a'), b = $('sim-b'), srlgSel = $('sim-srlg');
   simFillSelects();
   a.onchange = function () { simSetSource(a.value); };
   b.onchange = function () { simSetTarget(b.value); };
+  if (srlgSel) srlgSel.onchange = function () {
+    if (!srlgSel.value) return;
+    simToggleSrlg(sim, parseInt(srlgSel.value, 10));
+    srlgSel.value = '';
+    simRefresh();
+  };
   $('sim-swap').onclick = function () { var t = sim.sourceNode; sim.sourceNode = sim.targetNode; sim.targetNode = t; simRefresh(); };
   $('sim-reset').onclick = simReset;
   $('sim-exit').onclick = function () { simSetActive(false); };
@@ -2311,6 +2393,115 @@ function histGo(i) {
       .catch(function (err) { if (mine === hist.token) toast('Could not load that run: ' + err.message); });
   }, 160);
 }
+/* MON-ENGINE:BEGIN - tests/js/test_monitoring.js exercises these pure helpers */
+function monBuildHistogramBars(series, width, height) {
+  var list = series || [];
+  if (!list.length) return [];
+  var maxTotal = Math.max.apply(null, list.map(function (b) { return b.total || 0; })) || 1;
+  var bw = Math.max(4, (width - 8) / list.length);
+  return list.map(function (b, idx) {
+    var scale = (height - 8) / maxTotal;
+    var downH = Math.round((b.down || 0) * scale);
+    var chgH = Math.round((b.changed || 0) * scale);
+    var upH = Math.round((b.up || 0) * scale);
+    return {
+      x: Math.round(4 + idx * bw),
+      w: Math.max(2, Math.floor(bw - 2)),
+      upH: upH,
+      downH: downH,
+      chgH: chgH,
+      ts: b.ts,
+      total: b.total || 0
+    };
+  });
+}
+function monFilterEvents(events, typeFilter, statusFilter, query) {
+  var q = String(query || '').trim().toLowerCase();
+  return (events || []).filter(function (ev) {
+    if (typeFilter && ev.event_type !== typeFilter) return false;
+    if (statusFilter && ev.object_status !== statusFilter) return false;
+    if (q) {
+      var hay = [ev.event_type, ev.object_id, ev.detected_by, ev.summary, ev.area].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+function monFindRunIndex(runs, runId) {
+  for (var i = 0; i < (runs || []).length; i++) {
+    if (runs[i].run_id === runId) return i;
+  }
+  return -1;
+}
+/* MON-ENGINE:END */
+
+var mon = { open: false, events: [], series: [], sse: null };
+function monRenderHistogram() {
+  var el = $('mon-histogram'); if (!el) return;
+  el.textContent = '';
+  var w = el.clientWidth || 640, h = 56, bars = monBuildHistogramBars(mon.series, w, h);
+  bars.forEach(function (b) {
+    var y = h - 4;
+    if (b.downH) { y -= b.downH; var r1 = svg('rect', { x: b.x, y: y, width: b.w, height: b.downH, fill: C.removed }, el); r1.setAttribute('title', b.ts + ': ' + b.total + ' events'); }
+    if (b.chgH) { y -= b.chgH; var r2 = svg('rect', { x: b.x, y: y, width: b.w, height: b.chgH, fill: C.changed }, el); r2.setAttribute('title', b.ts + ': ' + b.total + ' events'); }
+    if (b.upH) { y -= b.upH; var r3 = svg('rect', { x: b.x, y: y, width: b.w, height: b.upH, fill: C.added }, el); r3.setAttribute('title', b.ts + ': ' + b.total + ' events'); }
+  });
+}
+function monJumpToEvent(ev) {
+  var idx = monFindRunIndex(hist.runs, ev.run_id);
+  if (idx >= 0) histGo(idx);
+  var focusIds = [ev.detected_by, ev.object_id].filter(function (id) { return !!nodes[id]; });
+  if (focusIds.length) focusOn(ev.summary || ev.event_type, focusIds, []);
+}
+function monRenderRows() {
+  var tbody = $('mon-tbody'); if (!tbody) return;
+  tbody.textContent = '';
+  var list = monFilterEvents(mon.events, ($('mon-type') || {}).value, ($('mon-status') || {}).value, ($('mon-search') || {}).value);
+  var badge = $('mon-badge'); if (badge) badge.textContent = String(list.length);
+  if (!list.length) {
+    var tr0 = document.createElement('tr');
+    tr0.innerHTML = '<td colspan="6" style="color:var(--muted)">No matching events recorded.</td>';
+    tbody.appendChild(tr0);
+    return;
+  }
+  list.slice(0, 150).forEach(function (ev) {
+    var tr = document.createElement('tr'); tr.className = 'ev-row';
+    var sevCls = ev.severity === 'critical' ? 'down' : ev.severity === 'warning' ? 'warn' : 'info';
+    tr.innerHTML = '<td class="num">' + esc(histWhen(ev.timestamp)) + '</td><td>' + pill(sevCls, ev.severity.toUpperCase()) + '</td><td>' + esc(ev.event_type) + '</td><td class="num">' + esc(ev.object_id) + '</td><td class="num">' + esc(ev.detected_by) + '</td><td>' + esc(ev.summary) + '</td>';
+    tr.onclick = function () { monJumpToEvent(ev); };
+    tbody.appendChild(tr);
+  });
+}
+function monLoad() {
+  if (!window.fetch || !/^https?:$/.test(location.protocol)) return;
+  Promise.all([
+    fetch('api/events?limit=200', { headers: { Accept: 'application/json' } }).then(function (r) { return r.ok ? r.json() : null; }),
+    fetch('api/events/histogram?bucket=1h', { headers: { Accept: 'application/json' } }).then(function (r) { return r.ok ? r.json() : null; })
+  ]).then(function (res) {
+    if (res[0] && res[0].status === 'ok') mon.events = (res[0].data && res[0].data.events) || [];
+    if (res[1] && res[1].status === 'ok') mon.series = (res[1].data && res[1].data.series) || [];
+    monRenderHistogram();
+    monRenderRows();
+  }).catch(function () { /* ignore background fetch error */ });
+}
+function monToggle(force) {
+  mon.open = typeof force === 'boolean' ? force : !mon.open;
+  var d = $('mon-drawer'), b = $('btn-events');
+  if (d) d.classList.toggle('hidden', !mon.open);
+  if (b) b.classList.toggle('on', mon.open);
+  if (mon.open) monLoad();
+}
+function monConnectSse() {
+  if (mon.sse || typeof EventSource === 'undefined' || !/^https?:$/.test(location.protocol)) return;
+  try {
+    mon.sse = new EventSource('api/events/stream');
+    mon.sse.addEventListener('topology_updated', function () {
+      histInit();
+      if (mon.open) monLoad();
+    });
+  } catch (e) { /* SSE unavailable */ }
+}
+
 function histInit() {
   // Only a page served over http can have a history behind it; opened from disk it has none and stays as it was.
   if (!window.fetch || !/^https?:$/.test(location.protocol)) return;
@@ -2324,10 +2515,21 @@ function histInit() {
       $('h-next').onclick = function () { histGo(hist.index + 1); };
       $('h-live').onclick = function () { histGo(hist.runs.length - 1); };
       $('hist-bar').classList.remove('hidden');
+      if ($('btn-events')) $('btn-events').classList.remove('hidden');
+      monConnectSse();
       histSync();
     })
     .catch(function () { /* no server behind the page: no history bar */ });
 }
+(function () {
+  var be = $('btn-events'), mc = $('mon-close'), mr = $('mon-refresh'), mt = $('mon-type'), ms = $('mon-status'), mq = $('mon-search');
+  if (be) be.onclick = function () { monToggle(); };
+  if (mc) mc.onclick = function () { monToggle(false); };
+  if (mr) mr.onclick = function () { monLoad(); };
+  if (mt) mt.onchange = monRenderRows;
+  if (ms) ms.onchange = monRenderRows;
+  if (mq) mq.oninput = monRenderRows;
+})();
 
 // ------------------------------------------------------------------ go
 resetPositions(true);
@@ -2337,7 +2539,7 @@ mmSetup();
 render(); fit();
 ready = true;
 histInit();
-window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, loadScene: loadScene, histGo: histGo, setTime: setTime, goTo: goTo, afterView: afterView, drawMinimap: drawMinimap, cleanSvg: cleanSvgText, spec: specText, buildSpec: buildSpec, cliRunbook: cliRunbook, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
+window.__explorer = { sim: sim, simApi: { setActive: simSetActive, reset: simReset, toggleLink: simToggleLink, toggleNode: simToggleNode, toggleDrain: simToggleDrain, setCost: simSetCost, setSource: simSetSource, setTarget: simSetTarget, refresh: simRefresh, result: function () { return simRes; }, drainImpact: simDrainImpact }, graphModel: GM, palette: function () { return C; }, state: state, nodes: nodes, links: links, pos: pos, render: render, fit: fit, loadScene: loadScene, histGo: histGo, monitoring: { toggle: monToggle, load: monLoad, jump: monJumpToEvent }, setTime: setTime, goTo: goTo, afterView: afterView, drawMinimap: drawMinimap, cleanSvg: cleanSvgText, spec: specText, buildSpec: buildSpec, cliRunbook: cliRunbook, focusOn: focusOn, select: select, runSearch: runSearch, model: function () { return model; } };
 })();
 </script>
 </body>

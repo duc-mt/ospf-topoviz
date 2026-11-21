@@ -23,10 +23,6 @@ from src.visualizer import VisualOptions
 from tests.explorer_fixture import realistic
 from tests.test_explorer_js import JS_DIR, NODE
 
-pytestmark = pytest.mark.skipif(
-    NODE is None, reason="node + jsdom not available (npm install --prefix tests/js)"
-)
-
 
 def run_summary(run_id: str, nodes: int, links: int) -> dict:
     return {
@@ -46,6 +42,8 @@ def run_summary(run_id: str, nodes: int, links: int) -> dict:
 
 @pytest.fixture(scope="module")
 def observed(tmp_path_factory):
+    if NODE is None:
+        pytest.skip("node + jsdom not available (npm install --prefix tests/js)")
     folder = tmp_path_factory.mktemp("history_page")
     live = realistic()
     page = write_explorer(folder / "live.html", live, TopologyDiff())
@@ -189,3 +187,23 @@ def test_with_a_single_run_the_slider_cannot_move(observed):
 
 def test_none_of_this_raised_a_javascript_error(observed):
     assert observed["errors"] == []
+
+
+def test_monitoring_drawer_renders_histogram_and_filters_events(tmp_path):
+    """Verify Monitoring Drawer markup, histogram SVG, filter controls, and run jump in explorer.html."""
+    import shutil
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    page = write_explorer(tmp_path / "live.html", realistic(), TopologyDiff())
+    script = Path(__file__).parent / "js" / "test_monitoring.js"
+    proc = subprocess.run(
+        [node, str(script), str(page)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "MONITORING_OK" in proc.stdout

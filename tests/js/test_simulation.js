@@ -35,7 +35,7 @@ const scene = fixture.scene;
 // ---------------------------------------------------------------- the engine block, on its own
 const body = page.split('SIM-ENGINE:BEGIN')[1].split('/* SIM-ENGINE:END')[0];
 const E = new Function(body.slice(body.indexOf('\n')) + `
-  return { SIM_MAX_METRIC, makeGraphModel, computeShortestPaths, dijkstra, simAnalyze, simDrainImpact, simSetModel, simCountPaths, simPaths, simBlast, simBlastAnchors, simCutDependents };`)();
+  return { SIM_MAX_METRIC, makeGraphModel, computeShortestPaths, dijkstra, simAnalyze, simDrainImpact, simSetModel, simCountPaths, simPaths, simBlast, simBlastAnchors, simCutDependents, simToggleSrlg };`)();
 
 const R = (n) => '10.0.0.' + n;
 const NET = 'net-192.168.1.1';
@@ -212,6 +212,22 @@ test('cut-vertex detection: R4 is the only way to R7, R5 and R6; R4 itself has t
   const dep = E.simCutDependents(M, state(), [R(1)]);
   [7, 5, 6].forEach((n) => assert.ok(dep[R(n)], 'R' + n));
   assert.ok(!dep[R(4)] && !dep[R(2)] && !dep[R(10)], 'multi-homed routers are not flagged');
+});
+
+test('SRLG failure disables every link carrying that SRLG and updates ECMP & blast radius', () => {
+  const srlgScene = JSON.parse(JSON.stringify(scene));
+  srlgScene.links.forEach((l) => {
+    if (l.id === linkId(1, 8) || l.id === linkId(1, 9)) l.srlgs = [100];
+  });
+  const SM = E.makeGraphModel(srlgScene);
+  const st = state({ disabledSrlgs: new Set() });
+  E.simToggleSrlg(st, 100);
+  const r = E.dijkstra(R(1), R(10), st.disabledLinks, st.disabledNodes, st.costOverrides, SM, st.drainedNodes);
+  // Note: passing mods to computeShortestPaths tests full disabledSrlgs isolation of R10 (reachable only via R8/R9!)
+  const spf = E.computeShortestPaths(R(1), SM, st);
+  assert.strictEqual(spf.dist[R(10)], Infinity);
+  const bl = E.simBlast(SM, st, [R(1)]);
+  assert.ok(bl.isolated.includes(R(10)), 'SRLG 100 failure isolates R10');
 });
 
 console.log('parity with the Python SPF (correlation.spf) on the exported scene');

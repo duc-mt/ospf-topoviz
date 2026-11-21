@@ -85,6 +85,7 @@ polling:
   external: false            # AS-External (Type 5) / NSSA (Type 7) LSAs: marks ASBRs and lets --trace follow external
                              #   routes. Off by default: on a network that redistributes BGP the database is huge.
                              #   Platforms: VyOS/FRR, Cisco IOS/IOS-XE, Arista EOS, Aruba AOS-CX.
+  opaque_te: false           # Type 10 Opaque Area TE & SRLG LSAs (RFC 3630 / RFC 4203): bandwidth, admin groups, SRLGs.
 
 # Process ID: int (e.g. 1) or VRF/instance tag (e.g. "default", "VRF1").
 # Omit for platforms that do not require a process ID.
@@ -98,15 +99,19 @@ data_quality:
 
 # Guard settings (protects baseline against partial LSDB runs)
 guard:
-  min_known_ratio: 0.70      # min ratio of previously known nodes that must still be present
+  enabled: true
+  min_node_retention: 0.70   # min ratio of previously known nodes that must still be present
+  flag_partition: true       # flag runs where the topology splits into more pieces
 
 # Visualization settings
 visualization:
   # theme: light             # light | dark: colours of the Graphviz picture (--theme overrides). The HTML
                              #   explorer has its own auto / light / dark switch; this only sets where it starts
-  direction: LR              # LR (Left to Right) or TB (Top to Bottom)
-  show_costs: true
-  show_addresses: true
+  rankdir: auto              # auto | TB | LR | BT | RL
+  router_shape: box3d        # box3d | box | circle | ellipse | oval | doublecircle
+  show_interfaces: true      # print each advertising router's interface IP next to link costs
+  cost_weighted_lines: true  # draw higher-bandwidth (lower-cost) links with thicker lines
+  area_clusters: true        # group routers into dashed OSPF area boxes when multiple areas exist
 
 # History of the topology ("time travel"): every accepted run is kept in data/history/history.db and can be browsed
 # with the history bar of the explorer page when it is served with --serve. A run held back by the guard is not kept.
@@ -136,4 +141,46 @@ alerting:
     silent: false            # Send notification without sound (or env TELEGRAM_SILENT)
     send_image: true         # Attach topology diagram if available (or env TELEGRAM_SEND_IMAGE)
     proxy: null              # Optional: HTTP/HTTPS proxy e.g. "http://proxy:8080" (or env TELEGRAM_PROXY_URL)
+  # webhooks:
+  #   - name: slack-noc
+  #     enabled: false
+  #     format: slack          # generic | slack | teams | discord
+  #     url: ""                # Or env OSPF_MONITOR_WEBHOOK_URL
+  #     min_severity: warning
+  #     events: ["link_down", "link_up", "link_cost_changed", "node_flag_changed", "finding_raised"]
+  # loki:
+  #   enabled: false
+  #   url: ""                  # e.g. http://loki:3100/loki/api/v1/push
+  #   job: ospf-topoviz
+  #   asn: "0"
+  #   tenant_id: ""
+  # zabbix:
+  #   enabled: false
+  #   server: 127.0.0.1
+  #   port: 10051
+  #   host: ospf-topoviz
+  # event_log:
+  #   enabled: false
+  #   path: data/events.jsonl
+
+# Real-time event-driven ingestion (Syslog fast-poll, HTTP ingest, BGP-LS)
+# realtime:
+#   ingest:
+#     enabled: false
+#     token_env: OSPF_MONITOR_INGEST_TOKEN
+#     debounce_seconds: 2.0
+#   syslog_trigger:
+#     enabled: false
+#     bind: 127.0.0.1
+#     port: 5514
+#     debounce_seconds: 2.0
+#     cooldown_seconds: 10.0
+#   bgpls:
+#     enabled: false
+#     listen_address: 0.0.0.0
+#     listen_port: 179
+#     local_as: 65001
+#     router_id: 192.0.2.100
+#     settle_seconds: 2.0
+#     peers: []
 

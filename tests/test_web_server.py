@@ -717,3 +717,83 @@ def test_every_page_write_is_atomic_so_the_server_never_serves_half_a_page(
     assert target.read_text(encoding="utf-8") == good and [
         p.name for p in tmp_path.iterdir()
     ] == ["topology.html"]
+
+
+# ------------------------------------------------------- events & SSE stream
+def test_api_events_filtering_and_pagination(tmp_path):
+    import networkx as nx
+
+    from src.web.server import WebApp
+
+    app = WebApp(tmp_path / "data", tmp_path / "topology.html")
+    g = nx.DiGraph()
+    g.add_node("10.0.0.1", type="router", areas=["0.0.0.0"])
+    g.add_node("10.0.0.2", type="router", areas=["0.0.0.0"])
+    diff = TopologyDiff(
+        baseline_available=True,
+        added_edges=[{"source": "10.0.0.1", "target": "10.0.0.2", "metric": 10, "area": "0.0.0.0"}],
+        changed_metrics=[{"source": "10.0.0.1", "target": "10.0.0.2", "old_metric": 10, "new_metric": 50, "area": "0.0.0.0"}],
+    )
+    app.history.record(g, diff, run_id="run-100", timestamp="2026-11-21T10:15:00+00:00")
+
+    resp = app.handle("GET", "/api/events?type=link_cost_changed&limit=10")
+    assert resp.status == 200
+    data = json.loads(resp.body)["data"]
+    assert data["total"] == 1
+    assert data["events"][0]["event_type"] == "link_cost_changed"
+
+    bad = app.handle("GET", "/api/events?limit=9999")
+    assert bad.status == 400
+
+
+def test_api_events_histogram_buckets(tmp_path):
+    import networkx as nx
+
+    from src.web.server import WebApp
+
+    app = WebApp(tmp_path / "data", tmp_path / "topology.html")
+    g = nx.DiGraph()
+    g.add_node("10.0.0.1", type="router", areas=["0.0.0.0"])
+    diff = TopologyDiff(
+        baseline_available=True,
+        removed_nodes=[{"id": "10.0.0.9", "type": "router", "areas": ["0.0.0.0"]}],
+    )
+    app.history.record(g, diff, run_id="run-101", timestamp="2026-11-21T10:20:00+00:00")
+
+    resp = app.handle("GET", "/api/events/histogram?bucket=15m")
+    assert resp.status == 200
+    data = json.loads(resp.body)["data"]
+    assert data["bucket"] == "15m"
+    assert len(data["series"]) == 1
+    assert data["series"][0]["down"] == 1
+
+    bad = app.handle("GET", "/api/events/histogram?bucket=invalid")
+    assert bad.status == 400
+
+
+def test_api_events_stream_delivers_sse_on_publish(tmp_path):
+    import threading
+    import time
+    import urllib.request
+
+    from src.web.server import create_server
+
+    server = create_server("127.0.0.1", 0, data_dir=tmp_path / "data", output_html=tmp_path / "page.html")
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/api/events/stream?max_events=1"
+
+        def pub():
+            time.sleep(0.15)
+            server.app.broker.publish("topology_updated", {"run_id": "run-200"})
+
+        threading.Thread(target=pub, daemon=True).start()
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            assert resp.headers.get_content_type() == "text/event-stream"
+            raw = resp.read().decode("utf-8")
+        assert "event: topology_updated" in raw
+        assert '"run_id": "run-200"' in raw or '"run_id":"run-200"' in raw
+    finally:
+        server.shutdown()
+        server.server_close()

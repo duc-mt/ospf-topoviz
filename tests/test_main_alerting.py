@@ -334,3 +334,139 @@ def test_dispatch_alerts_in_sync_with_digraph() -> None:
     assert call_args.kwargs.get("title") == "OSPF Topology In Sync"
     assert call_args.kwargs.get("level") == "info"
     assert "2 router(s), 1 link(s) active" in call_args.kwargs.get("message")
+
+
+def test_dispatch_alerts_triggers_on_changed_metrics() -> None:
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="warning",
+    )
+
+    diff = TopologyDiff(
+        baseline_available=True,
+        changed_metrics=[
+            {
+                "source": "1.1.1.1",
+                "target": "2.2.2.2",
+                "old_metric": 10,
+                "new_metric": 100,
+                "area": "0.0.0.0",
+            }
+        ],
+        baseline_updated=True,
+    )
+    graph = {"nodes": [{"id": "1.1.1.1"}, {"id": "2.2.2.2"}], "edges": []}
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=graph,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology Changed"
+    assert call_args.kwargs.get("level") == "warning"
+    assert "Changed metrics: 1" in call_args.kwargs.get("message")
+
+
+def test_dispatch_alerts_triggers_on_flag_prefix_and_te_diffs() -> None:
+    mock_notifier = MagicMock(spec=TelegramNotifier)
+    mock_notifier.config = TelegramConfig(
+        enabled=True,
+        bot_token="test_tok",
+        chat_id="123456",
+        min_severity="warning",
+    )
+
+    diff = TopologyDiff(
+        baseline_available=True,
+        changed_node_flags=[
+            {
+                "id": "1.1.1.1",
+                "label": "1.1.1.1",
+                "attribute": "max_metric",
+                "old": False,
+                "new": True,
+                "areas": ["0.0.0.0"],
+            }
+        ],
+        changed_prefixes=[
+            {
+                "action": "added",
+                "prefix": "10.99.0.0/24",
+                "router": "1.1.1.1",
+                "kind": "stub",
+                "subtype": None,
+                "area": "0.0.0.0",
+                "old_metric": None,
+                "new_metric": 1,
+            }
+        ],
+        changed_te=[
+            {
+                "source": "1.1.1.1",
+                "target": "2.2.2.2",
+                "area": "0.0.0.0",
+                "local_ip": "10.0.0.1",
+                "remote_ip": "10.0.0.2",
+                "changes": {"srlgs": {"old": [], "new": [100]}},
+            }
+        ],
+        baseline_updated=True,
+    )
+    graph = {"nodes": [{"id": "1.1.1.1"}], "edges": []}
+
+    cli.dispatch_alerts(
+        settings={},
+        diff=diff,
+        graph=graph,
+        notifier=mock_notifier,
+    )
+
+    assert mock_notifier.send_alert.called
+    call_args = mock_notifier.send_alert.call_args
+    assert call_args.kwargs.get("title") == "OSPF Topology Changed"
+    assert call_args.kwargs.get("level") == "warning"
+    msg = call_args.kwargs.get("message")
+    assert "Changed flags: 1" in msg
+    assert "Changed prefixes: 1" in msg
+    assert "Changed TE: 1" in msg
+
+
+def test_settings_example_parses_cleanly_into_guard_and_visual_options() -> None:
+    from pathlib import Path
+    import yaml
+    from src.graph_engine import GuardConfig
+    from src.visualizer import VisualOptions
+
+    raw = yaml.safe_load(
+        Path("config/settings.yaml.example").read_text(encoding="utf-8")
+    )
+    guard_cfg = GuardConfig.from_settings(raw.get("guard"))
+    vis_cfg = VisualOptions.from_settings(raw.get("visualization"))
+
+    assert "min_node_retention" in (raw.get("guard") or {})
+    assert guard_cfg.min_node_retention == pytest.approx(raw["guard"]["min_node_retention"])
+    assert "rankdir" in (raw.get("visualization") or {})
+    assert vis_cfg.rankdir == raw["visualization"]["rankdir"]
+    assert "show_interfaces" in (raw.get("visualization") or {})
+    assert vis_cfg.show_interfaces is raw["visualization"]["show_interfaces"]
+    assert "cost_weighted_lines" in (raw.get("visualization") or {})
+    assert vis_cfg.cost_weighted_lines is raw["visualization"]["cost_weighted_lines"]
+
+
+def test_legacy_guard_and_visual_config_aliases_fallback() -> None:
+    from src.graph_engine import GuardConfig
+    from src.visualizer import VisualOptions
+
+    guard_cfg = GuardConfig.from_settings({"min_known_ratio": 0.65})
+    assert guard_cfg.min_node_retention == pytest.approx(0.65)
+
+    vis_cfg = VisualOptions.from_settings({"direction": "LR", "show_addresses": False})
+    assert vis_cfg.rankdir == "LR"
+    assert vis_cfg.show_interfaces is False

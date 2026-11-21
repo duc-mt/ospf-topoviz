@@ -52,12 +52,14 @@ class VendorProfile:
     #: LSAs are not collected (its adapter has no parser for them).
     external: CommandPair | None = None
     nssa: CommandPair | None = None
+    #: Type 10 Opaque Area TE LSA command, or ``None`` where not collected.
+    opaque_te: CommandPair | None = None
 
     def command(
         self, which: str, process_id: str | None, override: str | None = None
     ) -> str:
         """Return the CLI command for ``which`` (``"router"``, ``"network"``, ``"neighbors"``, ``"routes"``,
-        ``"external"`` or ``"nssa"``).
+        ``"external"``, ``"nssa"`` or ``"opaque_te"``).
 
         ``override`` is the user's ``device.commands.<which>`` setting; it may contain
         ``{pid}``, which is replaced by the process ID.
@@ -77,6 +79,7 @@ class VendorProfile:
             "routes": self.routes,
             "external": self.external,
             "nssa": self.nssa,
+            "opaque_te": self.opaque_te,
         }[which]
         if pair is None:
             raise ConfigError(
@@ -172,6 +175,9 @@ _EXTERNAL = CommandPair(
 _NSSA_EXTERNAL = CommandPair(
     "show ip ospf database nssa-external", "show ip ospf {pid} database nssa-external"
 )
+_OPAQUE_AREA = CommandPair(
+    "show ip ospf database opaque-area", "show ip ospf {pid} database opaque-area"
+)
 
 PROFILES: dict[str, VendorProfile] = {}
 
@@ -205,6 +211,7 @@ register(
         routes=CommandPair("show ip route ospf", "show ip route ospf {pid}"),
         external=_EXTERNAL,
         nssa=_NSSA_EXTERNAL,
+        opaque_te=_OPAQUE_AREA,
     ),
     "cisco_ios",
     "cisco_xe",
@@ -223,6 +230,7 @@ register(
         ),
         error_markers=_IOS_ERRORS,
         neighbors=CommandPair("show ospf neighbor", "show ospf {pid} neighbor"),
+        opaque_te=CommandPair("show ospf vrf all-inclusive database opaque-area"),
     )
 )
 register(
@@ -261,6 +269,7 @@ register(
         error_markers=("syntax error", "unknown command", "error:"),
         neighbors=CommandPair("show ospf neighbor detail"),
         routes=CommandPair("show route protocol ospf"),
+        opaque_te=CommandPair("show ospf database opaque-area extensive"),
     )
 )
 register(
@@ -283,6 +292,7 @@ register(
         routes=CommandPair("show ip route ospf"),
         external=_EXTERNAL,
         nssa=_NSSA_EXTERNAL,
+        opaque_te=_OPAQUE_AREA,
     )
 )
 register(
@@ -303,6 +313,7 @@ register(
         routes=CommandPair("show ip route ospf"),
         external=CommandPair("show ip ospf database external"),
         nssa=CommandPair("show ip ospf database nssa-external"),
+        opaque_te=CommandPair("show ip ospf database opaque-area"),
     )
 )
 register(
@@ -349,6 +360,7 @@ register(
         routes=CommandPair("show ip route ospf"),
         external=_EXTERNAL,
         nssa=_NSSA_EXTERNAL,
+        opaque_te=_OPAQUE_AREA,
     )
 )
 

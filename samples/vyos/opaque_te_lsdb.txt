@@ -1,0 +1,59 @@
+
+       OSPF Router with ID (10.0.0.1)
+
+
+                Opaque Area-Link States (Area 0.0.0.0)
+
+  LS age: 120
+  Options: 0x2  : *|-|-|-|-|-|E|-
+  LS Type: Opaque Area Link
+  Link State ID: 1.0.0.0
+  Advertising Router: 10.0.0.1
+  LS Seq Number: 80000001
+  Checksum: 0x1111
+  Length: 28
+  Opaque Type: Traffic Engineering (1)
+  Opaque ID: 0
+
+    TLV Type: Router Address (1), Length: 4
+      Router Address: 10.0.0.1
+
+  LS age: 120
+  Options: 0x2  : *|-|-|-|-|-|E|-
+  LS Type: Opaque Area Link
+  Link State ID: 1.0.0.1
+  Advertising Router: 10.0.0.1
+  LS Seq Number: 80000003
+  Checksum: 0x2222
+  Length: 132
+  Opaque Type: Traffic Engineering (1)
+  Opaque ID: 1
+
+    TLV Type: Link Information (2), Length: 120
+      Sub-TLV Type: Link Type (1), Length: 1
+        Link Type: Point-to-Point (1)
+      Sub-TLV Type: Link ID (2), Length: 4
+        Link ID: 10.0.0.2
+      Sub-TLV Type: Local Interface IP Address (3), Length: 4
+        Local Interface IP Address: 10.12.0.1
+      Sub-TLV Type: Remote Interface IP Address (4), Length: 4
+        Remote Interface IP Address: 10.12.0.2
+      Sub-TLV Type: Traffic Engineering Metric (5), Length: 4
+        Traffic Engineering Metric: 15
+      Sub-TLV Type: Maximum Bandwidth (6), Length: 4
+        Maximum Bandwidth: 1.25e+08 (bytes/sec)
+      Sub-TLV Type: Maximum Reservable Bandwidth (7), Length: 4
+        Maximum Reservable Bandwidth: 1.00e+08 (bytes/sec)
+      Sub-TLV Type: Unreserved Bandwidth (8), Length: 32
+        Priority 0: 1.00e+08 (bytes/sec)
+        Priority 1: 1.00e+08 (bytes/sec)
+        Priority 2: 1.00e+08 (bytes/sec)
+        Priority 3: 1.00e+08 (bytes/sec)
+        Priority 4: 7.50e+07 (bytes/sec)
+        Priority 5: 7.50e+07 (bytes/sec)
+        Priority 6: 5.00e+07 (bytes/sec)
+        Priority 7: 5.00e+07 (bytes/sec)
+      Sub-TLV Type: Resource Class/Color (9), Length: 4
+        Resource Class/Color: 0x0000000a
+      Sub-TLV Type: Shared Risk Link Group (138), Length: 8
+        SRLG: 100, 200

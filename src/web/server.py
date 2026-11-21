@@ -27,9 +27,11 @@ are used for anything. The server has no login: it listens on the loopback addre
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
+import queue
 import re
 import socket
 import threading
@@ -57,17 +59,29 @@ from src.graph_engine import (
     display_name,
     graph_from_payload,
 )
+from src.metrics import render_prometheus_metrics
 from src.poller import PollBusyError, PollLock
+from src.realtime.ingest import IngestCoordinator
 from src.visualizer import VisualOptions
 
 logger = logging.getLogger("ospf_tracker.web")
 
-__all__ = ["PollCoordinator", "PollScheduler", "WebApp", "create_server", "run_server"]
+__all__ = [
+    "EventBroker",
+    "PollCoordinator",
+    "PollScheduler",
+    "WebApp",
+    "create_server",
+    "run_server",
+]
 
 JSON_TYPE = "application/json; charset=utf-8"
 HTML_TYPE = "text/html; charset=utf-8"
 DEFAULT_HISTORY_LIMIT = 50
 MAX_HISTORY_LIMIT = 500
+DEFAULT_EVENT_LIMIT = 100
+SSE_KEEPALIVE_SECONDS = 15.0
+MAX_INGEST_BYTES = 16 * 1024 * 1024
 #: How many findings ``/api/status`` lists.
 STATUS_FINDINGS = 20
 #: Past scenes kept in memory (a run never changes once recorded, so they can be reused as is).
@@ -107,6 +121,56 @@ def json_response(
     return Response(status, body.encode("utf-8"), JSON_TYPE, headers or {})
 
 
+class EventBroker:
+    """Thread-safe fan-out hub delivering Server-Sent Events (SSE) to active HTTP clients."""
+
+    def __init__(self, max_queue: int = 128) -> None:
+        self._max_queue = max_queue
+        self._lock = threading.Lock()
+        self._subscribers: set[queue.Queue[str | None]] = set()
+
+    def subscribe(self) -> queue.Queue[str | None]:
+        """Register a new subscriber queue."""
+        q: queue.Queue[str | None] = queue.Queue(maxsize=self._max_queue)
+        with self._lock:
+            self._subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue[str | None]) -> None:
+        """Remove a subscriber queue."""
+        with self._lock:
+            self._subscribers.discard(q)
+
+    def publish(
+        self, event_name: str, data: dict[str, Any], event_id: str | None = None
+    ) -> None:
+        """Broadcast one SSE event frame to all active subscribers without blocking."""
+        payload = json.dumps(
+            data, ensure_ascii=False, separators=(",", ":"), default=str
+        )
+        prefix = f"id: {event_id}\n" if event_id else ""
+        frame = f"{prefix}event: {event_name}\ndata: {payload}\n\n"
+        with self._lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            try:
+                q.put_nowait(frame)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                    q.put_nowait(frame)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def close_all(self) -> None:
+        """Signal all open SSE subscribers to close."""
+        with self._lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            with contextlib.suppress(queue.Full):
+                q.put_nowait(None)
+
+
 # ============================================================ polling
 class PollCoordinator:
     """Starts polls in the background and remembers how the last one went.
@@ -117,10 +181,14 @@ class PollCoordinator:
     """
 
     def __init__(
-        self, poll_fn: Callable[[], int] | None, lock_path: str | Path
+        self,
+        poll_fn: Callable[[], int] | None,
+        lock_path: str | Path,
+        on_complete: Callable[[], None] | None = None,
     ) -> None:
         self._poll_fn = poll_fn
         self._lock_path = Path(lock_path)
+        self._on_complete = on_complete
         self._guard = threading.Lock()
         self._running = False
         self._last: dict[str, Any] | None = None
@@ -192,6 +260,11 @@ class PollCoordinator:
             with self._guard:
                 self._running = False
                 self._last = outcome
+            if self._on_complete is not None:
+                try:
+                    self._on_complete()
+                except Exception:
+                    logger.exception("Post-poll callback failed")
 
 
 class PollScheduler(threading.Thread):
@@ -236,17 +309,53 @@ class WebApp:
         self.options = options or VisualOptions()
         self.engine = GraphEngine(self.data_dir)
         self.history = HistoryStore(self.data_dir / "history" / "history.db")
-        self.coordinator = PollCoordinator(poll_fn, self.data_dir / ".poll.lock")
+        self.broker = EventBroker()
+        self.ingest = IngestCoordinator(self.data_dir, self.engine, self.broker)
+        self.coordinator = PollCoordinator(
+            poll_fn, self.data_dir / ".poll.lock", on_complete=self._notify_poll_done
+        )
         self.scheduler: PollScheduler | None = None
         self._scenes: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._scene_lock = threading.Lock()
+        self._last_notified_run_id: str | None = None
+
+    def _notify_poll_done(self) -> None:
+        latest = self.history.list_runs(1)
+        if latest and latest[0]["run_id"] != self._last_notified_run_id:
+            self._last_notified_run_id = latest[0]["run_id"]
+            self.broker.publish(
+                "topology_updated",
+                {
+                    "run_id": latest[0]["run_id"],
+                    "timestamp": latest[0]["timestamp"],
+                },
+                event_id=latest[0]["run_id"],
+            )
 
     # ------------------------------------------------------------ routing
-    def handle(self, method: str, target: str) -> Response:
+    def handle(
+        self,
+        method: str,
+        target: str,
+        *,
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        client_host: str = "127.0.0.1",
+    ) -> Response:
         """Answer one request. Never raises: errors become JSON error responses."""
         split = urlsplit(target)
         path, query = split.path, parse_qs(split.query, keep_blank_values=True)
         try:
+            if path == "/api/ingest/lsdb":
+                if method == "POST":
+                    return self._ingest_lsdb(body, headers or {}, client_host)
+                response = self._error(
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    f"{method} is not allowed here; use POST",
+                    path,
+                )
+                response.headers["Allow"] = "POST"
+                return response
             return self._route(method, path, query)
         except ApiError as exc:
             return self._error(exc.status, exc.message, path)
@@ -274,8 +383,11 @@ class WebApp:
             (re.compile(r"/api/history"), "GET", self._history_list),
             (re.compile(r"/api/history/([^/]+)"), "GET", self._history_run),
             (re.compile(r"/api/history/([^/]+)/scene"), "GET", self._history_scene),
+            (re.compile(r"/api/events"), "GET", self._events_list),
+            (re.compile(r"/api/events/histogram"), "GET", self._events_histogram),
             (re.compile(r"/api/trace"), "GET", self._trace),
             (re.compile(r"/api/poll"), "POST", self._poll),
+            (re.compile(r"/metrics"), "GET", self._metrics),
         ]
         allowed: set[str] = set()
         for pattern, verb, func in routes:
@@ -498,6 +610,112 @@ class WebApp:
             }
         )
 
+    def _events_list(self, query: dict[str, list[str]]) -> Response:
+        limit = DEFAULT_EVENT_LIMIT
+        if "limit" in query:
+            text = self._one(query, "limit")
+            if not text.isdigit() or not 1 <= int(text) <= MAX_HISTORY_LIMIT:
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    f"limit must be a whole number from 1 to {MAX_HISTORY_LIMIT}",
+                )
+            limit = int(text)
+
+        def opt(name: str) -> str | None:
+            if name not in query:
+                return None
+            val = self._one(query, name)
+            if name in ("since", "until"):
+                try:
+                    datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except ValueError:
+                    raise ApiError(
+                        HTTPStatus.BAD_REQUEST,
+                        f"'{name}' must be an ISO-8601 timestamp",
+                    ) from None
+            return val
+
+        events, total = self.history.query_events(
+            limit=limit,
+            since=opt("since"),
+            until=opt("until"),
+            event_type=opt("type"),
+            status=opt("status"),
+            severity=opt("severity"),
+            router=opt("router"),
+            prefix=opt("prefix"),
+            q=opt("q"),
+        )
+        return ok({"events": events, "total": total})
+
+    def _events_histogram(self, query: dict[str, list[str]]) -> Response:
+        bucket = "1h"
+        if "bucket" in query:
+            bucket = self._one(query, "bucket")
+            if bucket not in ("15m", "1h", "1d"):
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    "bucket must be one of 15m, 1h, 1d",
+                )
+
+        def opt_iso(name: str) -> str | None:
+            if name not in query:
+                return None
+            val = self._one(query, name)
+            try:
+                datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except ValueError:
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    f"'{name}' must be an ISO-8601 timestamp",
+                ) from None
+            return val
+
+        series = self.history.event_histogram(
+            bucket=bucket,
+            since=opt_iso("since"),
+            until=opt_iso("until"),
+        )
+        return ok({"bucket": bucket, "series": series})
+
+    def _metrics(self, _query: dict[str, list[str]]) -> Response:
+        text = render_prometheus_metrics(
+            self.current_graph(), self.history, self.coordinator.snapshot()
+        )
+        return Response(
+            HTTPStatus.OK,
+            text.encode("utf-8"),
+            "text/plain; version=0.0.4; charset=utf-8",
+        )
+
+    def _ingest_lsdb(
+        self, body: bytes, headers: dict[str, str], client_host: str
+    ) -> Response:
+        auth = None
+        for k, v in headers.items():
+            if k.lower() == "authorization":
+                auth = v
+                break
+        if not self.ingest.verify_token(auth, remote_host=client_host):
+            raise ApiError(
+                HTTPStatus.UNAUTHORIZED,
+                "unauthorized: valid Bearer token required",
+            )
+        if not body:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "empty JSON body")
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"invalid JSON payload: {exc}") from None
+        try:
+            result = self.ingest.submit(payload)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from None
+        except PollBusyError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, str(exc)) from None
+        status = HTTPStatus.ACCEPTED if result.get("queued") else HTTPStatus.OK
+        return ok(result, status)
+
     def _poll(self, _query: dict[str, list[str]]) -> Response:
         if not self.coordinator.configured:
             raise ApiError(
@@ -517,7 +735,38 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve(self) -> None:
         app: WebApp = self.server.app  # type: ignore[attr-defined]
-        response = app.handle(self.command, self.path)
+        split = urlsplit(self.path)
+        if self.command == "GET" and split.path == "/api/events/stream":
+            self._serve_sse(app, parse_qs(split.query, keep_blank_values=True))
+            return
+        body = b""
+        if self.command == "POST":
+            try:
+                clen = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                clen = 0
+            if clen > MAX_INGEST_BYTES:
+                err = json_response(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {"status": "error", "error": "request body exceeds 16 MiB limit"},
+                )
+                self.send_response(err.status)
+                self.send_header("Content-Type", err.content_type)
+                self.send_header("Content-Length", str(len(err.body)))
+                self.end_headers()
+                self.wfile.write(err.body)
+                return
+            if clen > 0:
+                body = self.rfile.read(clen)
+        headers = dict(self.headers.items())
+        client_host = self.client_address[0] if self.client_address else "127.0.0.1"
+        response = app.handle(
+            self.command,
+            self.path,
+            body=body,
+            headers=headers,
+            client_host=client_host,
+        )
         self.send_response(response.status)
         self.send_header("Content-Type", response.content_type)
         self.send_header("Content-Length", str(len(response.body)))
@@ -531,6 +780,38 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(response.body)
+
+    def _serve_sse(self, app: WebApp, query: dict[str, list[str]]) -> None:
+        max_events: int | None = None
+        if "max_events" in query and query["max_events"][0].isdigit():
+            max_events = max(1, int(query["max_events"][0]))
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        q = app.broker.subscribe()
+        sent = 0
+        try:
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            while max_events is None or sent < max_events:
+                try:
+                    frame = q.get(timeout=SSE_KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                if frame is None:
+                    break
+                self.wfile.write(frame.encode("utf-8"))
+                self.wfile.flush()
+                sent += 1
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            app.broker.unsubscribe(q)
 
     do_GET = do_HEAD = do_POST = _serve
 
@@ -546,6 +827,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
+    request_queue_size = 64
     app: WebApp
 
 
@@ -608,6 +890,7 @@ def run_server(server: ThreadingHTTPServer) -> None:
     except KeyboardInterrupt:
         logger.info("Interrupted: shutting the web server down")
     finally:
+        app.broker.close_all()
         if app.scheduler is not None:
             app.scheduler.stop()
         server.server_close()

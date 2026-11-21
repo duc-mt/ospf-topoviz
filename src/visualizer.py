@@ -224,11 +224,32 @@ class VisualOptions:
             raise VisualizationError(
                 "visualization.names must map router IDs to host names"
             )
+        if "rankdir" not in section and "direction" in section:
+            logger.warning(
+                "visualization.direction is deprecated; use visualization.rankdir"
+            )
+            rankdir_raw = section.get("direction", "auto")
+        else:
+            rankdir_raw = section.get("rankdir", "auto")
+        if "show_interfaces" not in section and "show_addresses" in section:
+            logger.warning(
+                "visualization.show_addresses is deprecated; use visualization.show_interfaces"
+            )
+            show_if_raw = section.get("show_addresses", True)
+        else:
+            show_if_raw = section.get("show_interfaces", True)
+        if "cost_weighted_lines" not in section and "show_costs" in section:
+            logger.warning(
+                "visualization.show_costs is deprecated; use visualization.cost_weighted_lines"
+            )
+            cost_lines_raw = section.get("show_costs", True)
+        else:
+            cost_lines_raw = section.get("cost_weighted_lines", True)
         options = cls(
-            rankdir=str(section.get("rankdir", "auto")),
+            rankdir=str(rankdir_raw),
             router_shape=str(section.get("router_shape", "box3d")),
-            show_interfaces=bool(section.get("show_interfaces", True)),
-            cost_weighted_lines=bool(section.get("cost_weighted_lines", True)),
+            show_interfaces=bool(show_if_raw),
+            cost_weighted_lines=bool(cost_lines_raw),
             area_clusters=bool(section.get("area_clusters", True)),
             names={str(k): str(v) for k, v in names.items()},
             theme=str(section.get("theme", "light")).strip().lower(),
@@ -672,6 +693,8 @@ class TopologyVisualizer:
             ]
             if roles:
                 label += "\\n" + "/".join(roles)
+            if attrs.get("max_metric"):
+                label += "\\nMAX-METRIC"
             externals = attrs.get("externals") or ()
             if externals:
                 label += f"\\n{_plural(len(externals), 'external route')}"

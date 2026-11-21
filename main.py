@@ -219,6 +219,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="send a test alert message to Telegram using current configuration and exit",
     )
+    ap.add_argument(
+        "--show-bgpls-config",
+        action="store_true",
+        help="print ready-to-paste BGP-LS configuration snippets for IOS-XR, NX-OS, FRR/VyOS, EOS, and Junos and exit",
+    )
+    ap.add_argument(
+        "--bgpls",
+        action="store_true",
+        help="run the embedded native BGP-LS collector during --serve (when realtime.bgpls is configured)",
+    )
+    ap.add_argument(
+        "--doctor-passive",
+        action="store_true",
+        help="run passive OSPF listener diagnostics (DBD MTU, GRE conntrack, iptables) and exit",
+    )
+    ap.add_argument(
+        "--passive-mode",
+        choices=("gre", "macvlan"),
+        default="gre",
+        help="passive sidecar link mode for --doctor-passive (default: gre)",
+    )
+    ap.add_argument(
+        "--iface",
+        default="gre1",
+        help="passive interface name for --doctor-passive (default: gre1)",
+    )
+    ap.add_argument(
+        "--peer",
+        default=None,
+        help="optional remote peer IP for --doctor-passive",
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap.parse_args(argv)
@@ -367,6 +398,10 @@ def save_raw(raw: RawLSDB, directory: Path) -> None:
             )
         if raw.nssa:
             (directory / FilePoller.NSSA_FILE).write_text(raw.nssa, encoding="utf-8")
+        if raw.opaque_te:
+            (directory / FilePoller.OPAQUE_TE_FILE).write_text(
+                raw.opaque_te, encoding="utf-8"
+            )
     except OSError as exc:
         raise TrackerError(
             f"Could not write raw capture to {directory}: {exc}"
@@ -423,7 +458,9 @@ def make_ingest(parsers: ParserPool):
 
     def ingest(seed, raw: RawLSDB) -> SeedIngest:
         parser = parsers.get(seed.device_type, seed.process_id)
-        lsdb = parser.parse_lsdb(raw.router, raw.network, raw.external, raw.nssa)
+        lsdb = parser.parse_lsdb(
+            raw.router, raw.network, raw.external, raw.nssa, raw.opaque_te
+        )
         neighbors = routes = None
         if raw.neighbors.strip():
             try:
@@ -566,6 +603,43 @@ def run(args: argparse.Namespace, notifier: TelegramNotifier | None = None) -> i
             "\nSample configuration created! Edit settings.yaml with your seed IP, device type, and credentials."
         )
         return EXIT_OK
+
+    if getattr(args, "show_bgpls_config", False):
+        from src.realtime.bgpls_collector import render_bgpls_router_configs
+        from src.realtime.bgpls_translator import BgplsConfig
+
+        try:
+            raw_settings = load_settings(args.config, required=False)
+        except (ConfigError, OSError):
+            raw_settings = {}
+        rt = raw_settings.get("realtime") if isinstance(raw_settings, dict) else {}
+        b_cfg = BgplsConfig.from_settings(rt.get("bgpls") if isinstance(rt, dict) else None)
+        print(
+            render_bgpls_router_configs(
+                local_as=b_cfg.local_as,
+                collector_ip=b_cfg.router_id,
+            )
+        )
+        return EXIT_OK
+
+    if getattr(args, "doctor_passive", False):
+        from src.realtime.doctor import run_passive_doctor
+
+        checks = run_passive_doctor(
+            mode=args.passive_mode,
+            iface=args.iface,
+            peer_ip=args.peer,
+        )
+        print(f"Passive OSPF Doctor ({args.passive_mode} mode, iface {args.iface}):")
+        all_ok = True
+        for c in checks:
+            badge = "[PASS]" if c["ok"] else "[WARN]"
+            print(f"  {badge} {c['check']}: {c['detail']}")
+            if c.get("remediation"):
+                print(f"         -> Remediation: {c['remediation']}")
+            if not c["ok"]:
+                all_ok = False
+        return EXIT_OK if all_ok else EXIT_FINDINGS
 
     if getattr(args, "test_telegram", False):
         try:
@@ -777,13 +851,14 @@ def _run_pipeline(
         print(f" Explorer  : {page.render(graph, diff, trace=trace)}")
     print()
 
-    # 5. Dispatch alerts if configured and anomalies/findings exist
+    # 5. Dispatch alerts and event exporters if configured
     dispatch_alerts(
         settings,
         diff,
         graph,
         image_path=str(image) if image else None,
         notifier=notifier,
+        events=engine.last_events,
     )
 
     if args.dry_run:
@@ -827,6 +902,35 @@ def serve(args: argparse.Namespace, notifier: TelegramNotifier | None = None) ->
         poll_fn=poll_once,
         poll_interval=options.poll_interval,
     )
+    realtime_cfg = settings.get("realtime") if isinstance(settings.get("realtime"), dict) else {}
+    syslog_srv = None
+    if isinstance(realtime_cfg.get("syslog_trigger"), dict):
+        from src.realtime.syslog_trigger import SyslogTriggerConfig, SyslogTriggerServer
+
+        st_cfg = SyslogTriggerConfig.from_settings(realtime_cfg["syslog_trigger"])
+        if st_cfg.enabled:
+            syslog_srv = SyslogTriggerServer(st_cfg, server.app.coordinator.trigger)
+            syslog_srv.start()
+    bgpls_collector = None
+    bgpls_raw = realtime_cfg.get("bgpls") if isinstance(realtime_cfg.get("bgpls"), dict) else {}
+    if getattr(args, "bgpls", False) or (isinstance(bgpls_raw, dict) and bgpls_raw.get("enabled")):
+        from src.realtime.bgpls_collector import BgpLsCollector
+        from src.realtime.bgpls_translator import BgplsConfig
+
+        b_cfg = BgplsConfig.from_settings(bgpls_raw)
+
+        def _on_bgpls_lsdb(lsdb: Lsdb) -> None:
+            parsed = build_parsed_topology(lsdb, {"device_type": "bgpls"}, [], settings)
+            _g, diff = server.app.engine.process(parsed)
+            if diff.baseline_updated and server.app.engine.last_run_id:
+                server.app.broker.publish(
+                    "topology_updated",
+                    {"run_id": server.app.engine.last_run_id, "source": "bgpls"},
+                    event_id=server.app.engine.last_run_id,
+                )
+
+        bgpls_collector = BgpLsCollector(b_cfg, on_lsdb=_on_bgpls_lsdb)
+        bgpls_collector.start()
     shown = "[" + options.host + "]" if ":" in options.host else options.host
     print(
         f"[*] Serving the OSPF topology explorer on http://{shown}:{server.server_port}/"
@@ -835,7 +939,13 @@ def serve(args: argparse.Namespace, notifier: TelegramNotifier | None = None) ->
         print(
             "[!] The server has no login and can start polls: keep it on a trusted network or behind a proxy."
         )
-    run_server(server)
+    try:
+        run_server(server)
+    finally:
+        if bgpls_collector is not None:
+            bgpls_collector.stop()
+        if syslog_srv is not None:
+            syslog_srv.stop()
     return EXIT_OK
 
 
@@ -868,12 +978,18 @@ def dispatch_alerts(
     graph: Any,
     image_path: str | None = None,
     notifier: TelegramNotifier | None = None,
+    events: Any = (),
 ) -> None:
-    """Send notifications to configured channels if anomalies or state changes exist."""
-    if notifier is None:
-        notifier = build_telegram_notifier(settings)
+    """Send notifications and event exports to configured channels when changes or findings exist."""
+    from src.notifier.dispatcher import NotifierDispatcher
 
-    if not notifier.config.enabled:
+    tg = notifier if notifier is not None else build_telegram_notifier(settings)
+    dispatcher = NotifierDispatcher.from_settings(settings, telegram=tg)
+
+    if events and diff.baseline_updated:
+        dispatcher.export_events(events)
+
+    if not dispatcher.has_alert_sinks():
         return
 
     # Determine anomalies & changes
@@ -886,6 +1002,17 @@ def dispatch_alerts(
         changes.append(f"Added links: {len(diff.added_edges)}")
     if diff.removed_edges:
         changes.append(f"Removed links: {len(diff.removed_edges)}")
+    if diff.changed_metrics:
+        changes.append(f"Changed metrics: {len(diff.changed_metrics)}")
+    changed_flags = getattr(diff, "changed_node_flags", None) or []
+    if changed_flags:
+        changes.append(f"Changed flags: {len(changed_flags)}")
+    changed_prefixes = getattr(diff, "changed_prefixes", None) or []
+    if changed_prefixes:
+        changes.append(f"Changed prefixes: {len(changed_prefixes)}")
+    changed_te = getattr(diff, "changed_te", None) or []
+    if changed_te:
+        changes.append(f"Changed TE: {len(changed_te)}")
 
     findings = diff.findings or []
     critical_findings = [f for f in findings if _finding_severity(f) == "critical"]
@@ -925,12 +1052,13 @@ def dispatch_alerts(
             "hint": "Check OSPF TopoViz explorer HTML for complete details.",
         }
 
-        notifier.send_alert(
+        dispatcher.dispatch_alert(
             title=title,
             message=message,
             level=level,
             attachment_path=image_path,
             metadata=metadata,
+            events=events,
         )
     else:
         # Topology in sync: dispatch info heartbeat (delivered if min_severity="info")
@@ -943,7 +1071,7 @@ def dispatch_alerts(
         else:
             node_count = len(getattr(graph, "nodes", []))
             edge_count = len(getattr(graph, "edges", []))
-        notifier.send_alert(
+        dispatcher.dispatch_alert(
             title="OSPF Topology In Sync",
             message=(
                 f"OSPF topology verified: {node_count} router(s), "
@@ -954,6 +1082,7 @@ def dispatch_alerts(
                 "target": "OSPF Backbone",
                 "hint": "Topology diagram and baseline snapshot updated.",
             },
+            events=events,
         )
 
 

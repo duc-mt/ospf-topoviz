@@ -1,0 +1,28 @@
+services:
+  ospf-passive-frr:
+    image: quay.io/frrouting/frr:10.2.1
+    container_name: ospf-topoviz-passive-frr
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./passive/frr/daemons:/etc/frr/daemons:ro
+      - ./passive/frr/frr.conf:/etc/frr/frr.conf:ro
+      - ./passive/filter:/opt/filter:ro
+    restart: unless-stopped
+    profiles: ["passive"]
+
+  ospf-passive-exporter:
+    image: python:3.12-slim
+    container_name: ospf-topoviz-passive-exporter
+    network_mode: "service:ospf-passive-frr"
+    environment:
+      OSPF_TOPOVIZ_INGEST_URL: "http://host.docker.internal:8080/api/ingest/lsdb"
+      OSPF_MONITOR_INGEST_TOKEN: "${OSPF_MONITOR_INGEST_TOKEN:-}"
+      OSPF_PASSIVE_POLL_SECONDS: "2.0"
+    volumes:
+      - .:/app:ro
+    working_dir: /app
+    command: ["python", "-m", "passive.exporter"]
+    restart: unless-stopped
+    profiles: ["passive"]

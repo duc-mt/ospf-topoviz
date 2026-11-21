@@ -313,6 +313,14 @@ def render_topology_summary_table(graph, diff) -> str:
         [None, None, None, None, e_color],
         [None, None, None, None, m_color],
     ]
+    for label, count in (
+        ("Node Flags", len(getattr(diff, "changed_node_flags", []) or ())),
+        ("Prefix Changes", len(getattr(diff, "changed_prefixes", []) or ())),
+        ("TE Changes", len(getattr(diff, "changed_te", []) or ())),
+    ):
+        if count:
+            rows.append([label, "-", str(count), f"{count} modified", "⚠ MODIFIED"])
+            colors.append([None, None, None, None, ANSI_YELLOW])
     return render_table(headers, rows, alignments, colors)
 
 
@@ -369,6 +377,37 @@ def render_diff_table(diff, max_rows: int = 12) -> str | None:
         label = f"{e.get('source_label', '?')} -> {e.get('target_label', '?')}"
         detail = f"metric: {e.get('old_metric', '?')} -> {e.get('new_metric', '?')}"
         rows.append(["➜ METRIC", label, detail, "⚠ CHANGED"])
+        colors.append([ANSI_YELLOW, None, None, ANSI_YELLOW])
+
+    # Changed node flags
+    for f in getattr(diff, "changed_node_flags", []) or ():
+        detail = f"{f.get('attribute', '?')}: {f.get('old')} -> {f.get('new')}"
+        rows.append(["➜ FLAG", f.get("label") or f.get("id", "?"), detail, "⚠ CHANGED"])
+        colors.append([ANSI_YELLOW, None, None, ANSI_YELLOW])
+
+    # Changed prefixes
+    for p in getattr(diff, "changed_prefixes", []) or ():
+        act = p.get("action", "changed")
+        kind = p.get("kind", "prefix")
+        if p.get("subtype"):
+            kind = f"{kind}/{p['subtype']}"
+        if act == "added":
+            act_col, badge, st_col = "✚ PREFIX", "✚ ADDED", ANSI_CYAN
+            detail = f"{kind}, cost {p.get('new_metric', '?')} via {p.get('router', '?')}"
+        elif act == "removed":
+            act_col, badge, st_col = "✖ PREFIX", "✖ REMOVED", ANSI_RED
+            detail = f"{kind}, old cost {p.get('old_metric', '?')} via {p.get('router', '?')}"
+        else:
+            act_col, badge, st_col = "➜ PREFIX", "⚠ CHANGED", ANSI_YELLOW
+            detail = f"{kind}, cost {p.get('old_metric', '?')} -> {p.get('new_metric', '?')}"
+        rows.append([act_col, p.get("prefix", "?"), detail, badge])
+        colors.append([st_col, None, None, st_col])
+
+    # Changed TE attributes
+    for t in getattr(diff, "changed_te", []) or ():
+        label = f"{t.get('source', '?')} -> {t.get('target', '?')}"
+        fields = ", ".join(sorted((t.get("changes") or {}).keys())) or "attributes"
+        rows.append(["➜ TE ATTR", label, f"updated: {fields}", "⚠ CHANGED"])
         colors.append([ANSI_YELLOW, None, None, ANSI_YELLOW])
 
     total_changes = len(rows)
@@ -455,6 +494,7 @@ _NEIGHBOR_LABEL = {
     "NBR_STATE_CHANGE": "FLAP",
     "NBR_LOST": "FLAP (LOST)",
     "NBR_NEW": "NEW NEIGHBOR",
+    "ROUTER_MAX_METRIC": "MAX-METRIC (DRAINED)",
 }
 _ROUTE_LABEL = {
     "ROUTE_MISSING": "BLACKHOLE",
@@ -465,6 +505,7 @@ _ROUTE_LABEL = {
     "COST_MISMATCH": "SUBOPTIMAL",
     "NEXTHOP_MISMATCH": "SUBOPTIMAL",
     "ECMP_MISSING": "ECMP LOSS",
+    "SRLG_SHARED_RISK": "SHARED RISK (SRLG)",
 }
 
 
@@ -749,6 +790,9 @@ def render_summary_banner(raw, graph, diff, seeds: Sequence[Any] | None = None) 
         + len(diff.added_edges)
         + len(diff.removed_edges)
         + len(diff.changed_metrics)
+        + len(getattr(diff, "changed_node_flags", []) or ())
+        + len(getattr(diff, "changed_prefixes", []) or ())
+        + len(getattr(diff, "changed_te", []) or ())
     )
     diff_badge = f"Diffs: {total_diffs}"
     if total_diffs > 0:

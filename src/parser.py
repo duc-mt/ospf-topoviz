@@ -35,7 +35,9 @@ from src.vendors.base import (
     ParserError,
     RouterLsa,
     SourceDetail,
+    TeLinkLsa,
     dotted_mask,
+    is_max_metric_lsa,
     state_severity,
 )
 
@@ -131,6 +133,7 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
     networks: dict[tuple[str, str, str], NetworkLsa] = {}
     externals: dict[tuple[str, str], ExternalLsa] = {}
     nssa: dict[tuple[str, str, str], ExternalLsa] = {}
+    te_links: dict[tuple[str, str, str, str], TeLinkLsa] = {}
     seen = 0
     for lsdb in lsdbs:
         for lsa in lsdb.router_lsas:
@@ -161,6 +164,13 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
                 nssa[key] = (
                     lsa if lsa.area in (None, area) else replace(lsa, area=area)
                 )
+        for lsa in lsdb.te_lsas:
+            seen += 1
+            area = _area_key(lsa.area)
+            key = (lsa.adv_router, area, lsa.link_id, lsa.local_ip or "")
+            current = te_links.get(key)
+            if current is None or _is_newer(lsa, current):
+                te_links[key] = lsa if lsa.area == area else replace(lsa, area=area)
 
     merged = Lsdb(
         router_lsas=list(routers.values()),
@@ -169,6 +179,7 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
         router_id=lsdbs[0].router_id if len(lsdbs) == 1 else None,
         external_lsas=list(externals.values()),
         nssa_lsas=list(nssa.values()),
+        te_lsas=list(te_links.values()),
         ip_version=versions[0],
     )
     kept = (
@@ -176,6 +187,7 @@ def merge_lsdbs(lsdbs: Sequence[Lsdb]) -> Lsdb:
         + len(merged.network_lsas)
         + len(merged.external_lsas)
         + len(merged.nssa_lsas)
+        + len(merged.te_lsas)
     )
     logger.info(
         "Merged %d LSDB(s): %d router + %d network + %d external (Type 5) + %d NSSA (Type 7) LSAs "
@@ -244,17 +256,24 @@ class OSPFParser(BaseParser):
             return [], []
         return self.adapter.parse_external(raw_external, raw_nssa, self.process_id)
 
+    def parse_opaque_te(self, raw_opaque: str = "") -> list[TeLinkLsa]:
+        """Parse Type 10 Opaque Area TE Link LSAs; empty or unsupported yields ``[]``."""
+        if not raw_opaque or not raw_opaque.strip():
+            return []
+        return self.adapter.parse_opaque_te(raw_opaque, self.process_id)
+
     def parse_lsdb(
         self,
         raw_router: str,
         raw_network: str = "",
         raw_external: str = "",
         raw_nssa: str = "",
+        raw_opaque_te: str = "",
     ) -> Lsdb:
-        """Parse raw router and network text (and, if given, the external LSA text) into a neutral Lsdb model.
+        """Parse raw router and network text (and optional external / opaque TE LSA text) into a neutral Lsdb model.
 
-        External LSAs are extra detail: text that cannot be read is logged and left out, it never fails the
-        parse of the router and network LSAs.
+        External and TE LSAs are extra detail: text that cannot be read is logged and left out, it never
+        fails the parse of the router and network LSAs.
         """
         lsdb = self.adapter.parse(raw_router, raw_network, self.process_id)
         if not lsdb.router_lsas:
@@ -268,6 +287,10 @@ class OSPFParser(BaseParser):
             )
         except ParserError as exc:
             logger.warning("External LSAs ignored: %s", exc)
+        try:
+            lsdb.te_lsas = self.parse_opaque_te(raw_opaque_te)
+        except ParserError as exc:
+            logger.warning("Opaque TE LSAs ignored: %s", exc)
         return lsdb
 
     def parse(
@@ -276,13 +299,16 @@ class OSPFParser(BaseParser):
         raw_network: str = "",
         raw_external: str = "",
         raw_nssa: str = "",
+        raw_opaque_te: str = "",
     ) -> dict[str, Any]:
         """Parse raw LSDB text into the standardized topology dictionary.
 
         Raises:
             ParserError: If the platform parser fails or the output holds no router LSAs.
         """
-        lsdb = self.parse_lsdb(raw_router, raw_network, raw_external, raw_nssa)
+        lsdb = self.parse_lsdb(
+            raw_router, raw_network, raw_external, raw_nssa, raw_opaque_te
+        )
         return self.build_topology(lsdb, {"device_type": self.device_type})
 
     @classmethod
@@ -334,6 +360,9 @@ class OSPFParser(BaseParser):
                 node["abr"] = True
             if lsa.asbr:
                 node["asbr"] = True
+            if is_max_metric_lsa(lsa):
+                node["max_metric"] = True
+                node.setdefault("max_metric_areas", set()).add(lsa.area)
             cls._note_age(node, lsa.age)
             for link in lsa.links:
                 if cls._points_at_flushing(link, lsa.area, dead_nets, dead_routers):
@@ -366,6 +395,7 @@ class OSPFParser(BaseParser):
                 cls._add_edge(edges, net_id, attached, 0, "attachment", lsa.area)
 
         external_counts = cls._attach_externals(nodes, lsdb, maxage_age)
+        te_count = cls._attach_te(edges, lsdb, maxage_age)
 
         unresolved = sorted(n["id"] for n in nodes.values() if not n["resolved"])
         if unresolved:
@@ -386,6 +416,8 @@ class OSPFParser(BaseParser):
 
         for node in nodes.values():
             node["areas"] = sorted(node["areas"])
+            if "max_metric_areas" in node:
+                node["max_metric_areas"] = sorted(node["max_metric_areas"])
             if "prefixes" in node:
                 node["prefixes"].sort(key=lambda e: (e["prefix"], e["area"]))
             if "externals" in node:
@@ -412,6 +444,8 @@ class OSPFParser(BaseParser):
                 nssa_lsas=external_counts["type7"],
                 external_unattached=external_counts["unattached"],
             )
+        if te_count:
+            meta["te_lsas"] = te_count
         snapshot = cls._neighbor_snapshot(details)
         if snapshot:
             meta["neighbors"] = snapshot
@@ -465,6 +499,56 @@ class OSPFParser(BaseParser):
                 )
         counts["unattached"] = sorted(unattached, key=node_sort_key)
         return counts
+
+    @staticmethod
+    def _attach_te(
+        edges: dict[tuple[str, str], dict], lsdb: Lsdb, limit: int
+    ) -> int:
+        """Attach Type 10 Opaque Area TE & SRLG metadata onto matching edges and parallel links."""
+        attached = 0
+        for lsa in lsdb.te_lsas:
+            if limit and lsa.age is not None and lsa.age >= limit:
+                continue
+            target = (
+                lsa.link_id
+                if (lsa.adv_router, lsa.link_id) in edges
+                else network_node_id(lsa.link_id)
+            )
+            edge = edges.get((lsa.adv_router, target))
+            if edge is None:
+                continue
+            te_payload = {
+                "te_metric": lsa.te_metric,
+                "max_bw_bps": lsa.max_bw_bps,
+                "max_reservable_bw_bps": lsa.max_reservable_bw_bps,
+                "unreserved_bw_bps": list(lsa.unreserved_bw_bps),
+                "admin_groups": lsa.admin_groups,
+                "srlgs": list(lsa.srlgs),
+                "local_ip": lsa.local_ip,
+                "remote_ip": lsa.remote_ip,
+            }
+            parallels = edge.get("parallel_links") or ()
+            if lsa.local_ip and parallels:
+                if edge.get("interface_address") == lsa.local_ip:
+                    edge["te"] = te_payload
+                else:
+                    matched_parallel = False
+                    for p in parallels:
+                        if p.get("interface_address") == lsa.local_ip:
+                            p["te"] = te_payload
+                            matched_parallel = True
+                            break
+                    if not matched_parallel and "te" not in edge:
+                        edge["te"] = te_payload
+                if "te" not in edge:
+                    edge["te"] = dict(te_payload)
+                elif matched_parallel and lsa.srlgs:
+                    merged_srlgs = set(edge["te"].get("srlgs") or ()) | set(lsa.srlgs)
+                    edge["te"]["srlgs"] = sorted(merged_srlgs)
+            else:
+                edge["te"] = te_payload
+            attached += 1
+        return attached
 
     @classmethod
     def _split_flushing(

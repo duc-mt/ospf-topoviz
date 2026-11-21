@@ -92,6 +92,8 @@ RIB_EMPTY = "RIB_EMPTY"  # routing table collected but empty
 AREA_UNPOLLED = "AREA_UNPOLLED"  # an OSPF area exists that no seed router covers (its part of the map is missing)
 ASBR_UNKNOWN = "ASBR_UNKNOWN"  # external LSAs come from a router that has no router LSA in the topology
 ASBR_UNREACHABLE = "ASBR_UNREACHABLE"  # a polled router has no path to an ASBR whose external routes it should use
+ROUTER_MAX_METRIC = "ROUTER_MAX_METRIC"  # RFC 6987 max-metric stub-router advertisement (Transit traffic avoided)
+SRLG_SHARED_RISK = "SRLG_SHARED_RISK"  # ECMP paths share a single SRLG ID (correlated fiber-cut risk)
 
 NEIGHBOR_KINDS = (
     ADJ_NOT_FULL,
@@ -1155,6 +1157,118 @@ def asbr_findings(graph: nx.DiGraph, detail: SourceDetail) -> list[Finding]:
     return findings
 
 
+def max_metric_findings(graph: nx.DiGraph) -> list[Finding]:
+    """Emit an info finding for any router advertising RFC 6987 max-metric (65535) transit links."""
+    findings: list[Finding] = []
+    for node, attrs in sorted(
+        graph.nodes(data=True), key=lambda item: node_sort_key(item[0])
+    ):
+        if attrs.get("type") == "router" and attrs.get("max_metric"):
+            areas = attrs.get("max_metric_areas") or attrs.get("areas") or []
+            area_txt = f" in area {', '.join(areas)}" if areas else ""
+            findings.append(
+                Finding(
+                    category="topology",
+                    kind=ROUTER_MAX_METRIC,
+                    severity=INFO,
+                    router=node,
+                    subject=node,
+                    message=(
+                        f"Router {node} is advertising max-metric (65535){area_txt} "
+                        "(RFC 6987 stub-router mode)"
+                    ),
+                    hint=(
+                        "router is advertising max-metric (RFC 6987) stub-router mode; "
+                        "transit traffic avoids it"
+                    ),
+                    data={"areas": list(areas)},
+                )
+            )
+    return findings
+
+
+def srlg_findings(graph: nx.DiGraph) -> list[Finding]:
+    """Emit warnings when every equal-cost path between a router and destination shares a common SRLG ID."""
+    findings: list[Finding] = []
+    routers = sorted(
+        (n for n, d in graph.nodes(data=True) if d.get("type") == "router"),
+        key=node_sort_key,
+    )
+    if not routers:
+        return findings
+
+    def edge_srlgs(u: str, v: str) -> set[int]:
+        attrs = graph.edges.get((u, v)) or {}
+        vals = set((attrs.get("te") or {}).get("srlgs") or ())
+        for p in attrs.get("parallel_links") or ():
+            vals.update((p.get("te") or {}).get("srlgs") or ())
+        if attrs.get("link_type") == "attachment" and (v, u) in graph.edges:
+            rev = graph.edges[v, u]
+            vals.update((rev.get("te") or {}).get("srlgs") or ())
+        return vals
+
+    def ecmp_paths(preds: dict[str, set[str]], src: str, dst: str, limit: int = 16) -> list[list[str]]:
+        out: list[list[str]] = []
+
+        def walk(cur: str, tail: list[str]) -> None:
+            if len(out) >= limit:
+                return
+            if cur == src:
+                out.append([src, *tail])
+                return
+            for p in sorted(preds.get(cur) or (), key=node_sort_key):
+                if p not in tail:
+                    walk(p, [cur, *tail])
+
+        walk(dst, [])
+        return out
+
+    seen_keys: set[tuple[str, str, tuple[int, ...]]] = set()
+    for src in routers:
+        res = spf(graph, src)
+        for dst in sorted(res.dist, key=node_sort_key):
+            if dst == src or graph.nodes[dst].get("type") != "router":
+                continue
+            paths = ecmp_paths(res.preds, src, dst)
+            if len(paths) < 2:
+                continue
+            path_srlg_sets: list[set[int]] = []
+            for p in paths:
+                ps: set[int] = set()
+                for u, v in pairwise(p):
+                    ps |= edge_srlgs(u, v)
+                path_srlg_sets.append(ps)
+            if not path_srlg_sets or any(not ps for ps in path_srlg_sets):
+                continue
+            shared = sorted(set.intersection(*path_srlg_sets))
+            if not shared:
+                continue
+            key = (src, dst, tuple(shared))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            srlg_txt = ", ".join(str(s) for s in shared)
+            findings.append(
+                Finding(
+                    category="route",
+                    kind=SRLG_SHARED_RISK,
+                    severity=WARNING,
+                    router=src,
+                    subject=dst,
+                    message=(
+                        f"{src} -> {dst} has {len(paths)} ECMP paths sharing SRLG [{srlg_txt}]: "
+                        "a single shared-risk failure drops all equal-cost paths"
+                    ),
+                    hint=(
+                        "diverse routing check: separate ECMP links onto different SRLGs/fiber ducts "
+                        "or verify backup convergence"
+                    ),
+                    data={"shared_srlgs": shared, "ecmp_paths": len(paths)},
+                )
+            )
+    return findings
+
+
 # ================================================================ driver
 def correlate(
     graph: nx.DiGraph,
@@ -1178,6 +1292,8 @@ def correlate(
     report.area_coverage = audit_area_coverage(graph, details, seeds)
     report.findings += report.area_coverage.findings()
     report.findings += asbr_unknown_findings(graph)
+    report.findings += max_metric_findings(graph)
+    report.findings += srlg_findings(graph)
     if details:
         index = prefix_origins(graph)
         resolver = IpResolver(graph, details)

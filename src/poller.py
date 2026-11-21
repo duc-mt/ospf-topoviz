@@ -194,6 +194,7 @@ class RawLSDB:
     routes: str = ""  # OSPF routing-table output ("" = not collected or not supported on this platform)
     external: str = ""  # AS-External (Type 5) LSA output ("" = not collected or not supported on this platform)
     nssa: str = ""  # NSSA-External (Type 7) LSA output ("" = not collected or not supported on this platform)
+    opaque_te: str = ""  # Type 10 Opaque Area TE LSA output ("" = not collected or not supported)
 
 
 class BasePoller(ABC):
@@ -223,6 +224,7 @@ class DevicePoller(BasePoller):
         apply_env: bool = True,
         collect_routes: bool = True,
         collect_external: bool = False,
+        collect_opaque_te: bool = False,
     ) -> None:
         """Load and validate the settings.
 
@@ -321,6 +323,12 @@ class DevicePoller(BasePoller):
                     self.commands[which] = self.profile.command(
                         which, self.process_id, overrides.get(which)
                     )
+        if collect_opaque_te and (
+            self.profile.opaque_te is not None or overrides.get("opaque_te")
+        ):
+            self.commands["opaque_te"] = self.profile.command(
+                "opaque_te", self.process_id, overrides.get("opaque_te")
+            )
 
     @classmethod
     def from_settings(
@@ -350,6 +358,7 @@ class DevicePoller(BasePoller):
                 collect_neighbors=polling.neighbors,
                 collect_routes=polling.routes,
                 collect_external=polling.external,
+                collect_opaque_te=polling.opaque_te,
                 apply_env=bool(entry.get("_legacy")),
             )
             for entry in entries
@@ -389,6 +398,7 @@ class DevicePoller(BasePoller):
                 routes = self._run_optional(conn, "routes", "routing table")
                 external = self._run_optional(conn, "external", "external LSAs")
                 nssa = self._run_optional(conn, "nssa", "NSSA external LSAs")
+                opaque_te = self._run_optional(conn, "opaque_te", "opaque TE LSAs")
         except NetmikoAuthenticationException as exc:
             raise PollerAuthError(
                 f"Authentication failed for {self.host}: check username, password and enable secret"
@@ -418,6 +428,7 @@ class DevicePoller(BasePoller):
             routes=routes,
             external=external,
             nssa=nssa,
+            opaque_te=opaque_te,
         )
 
     def _run_optional(self, conn: Any, key: str, what: str) -> str:
@@ -466,6 +477,7 @@ class FilePoller(BasePoller):
     ROUTES_FILE = "routes.txt"
     EXTERNAL_FILE = "external_lsdb.txt"
     NSSA_FILE = "nssa_lsdb.txt"
+    OPAQUE_TE_FILE = "opaque_te_lsdb.txt"
 
     def __init__(
         self,
@@ -512,6 +524,7 @@ class FilePoller(BasePoller):
         routes = self._read_with_timeout(self.directory / self.ROUTES_FILE)
         external = self._read_with_timeout(self.directory / self.EXTERNAL_FILE)
         nssa = self._read_with_timeout(self.directory / self.NSSA_FILE)
+        opaque_te = self._read_with_timeout(self.directory / self.OPAQUE_TE_FILE)
 
         return RawLSDB(
             router=router,
@@ -522,6 +535,7 @@ class FilePoller(BasePoller):
             routes=routes,
             external=external,
             nssa=nssa,
+            opaque_te=opaque_te,
         )
 
 
@@ -536,6 +550,7 @@ class PollingOptions:
     neighbors: bool = True  # also read each router's neighbour table (adjacency state, interface names)
     routes: bool = True  # also read each router's OSPF routing table (to check it against the LSDB)
     external: bool = False  # also read the AS-External (Type 5) / NSSA-External (Type 7) LSAs: off, they can be huge
+    opaque_te: bool = False  # also read Type 10 Opaque Area TE & SRLG LSAs (RFC 3630 / RFC 4203)
 
     @classmethod
     def from_settings(cls, section: dict[str, Any] | None) -> PollingOptions:
@@ -551,6 +566,7 @@ class PollingOptions:
                 neighbors=bool(section.get("neighbors", True)),
                 routes=bool(section.get("routes", True)),
                 external=bool(section.get("external", False)),
+                opaque_te=bool(section.get("opaque_te", False)),
             )
         except (TypeError, ValueError) as exc:
             raise ConfigError(

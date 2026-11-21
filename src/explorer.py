@@ -56,6 +56,8 @@ def _title_and_sub(
         ]
         if roles:
             sub.append("/".join(roles))
+        if attrs.get("max_metric"):
+            sub.append("MAX-METRIC")
         if attrs.get("externals"):
             count = len(attrs["externals"])
             sub.append(f"{count} external route{'s' if count != 1 else ''}")
@@ -90,9 +92,19 @@ def _parallel_members(*sides: Any) -> list[dict[str, Any]]:
     for side in sides:
         if side is None or side.attrs.get("link_type") == "attachment":
             continue
-        members = [{"metric": side.attrs.get("metric"), "ip": side.attrs.get("interface_address")}]
+        members = [
+            {
+                "metric": side.attrs.get("metric"),
+                "ip": side.attrs.get("interface_address"),
+                **({"te": side.attrs["te"]} if side.attrs.get("te") else {}),
+            }
+        ]
         members += [
-            {"metric": p.get("metric"), "ip": p.get("interface_address")}
+            {
+                "metric": p.get("metric"),
+                "ip": p.get("interface_address"),
+                **({"te": p["te"]} if p.get("te") else {}),
+            }
             for p in side.attrs.get("parallel_links") or ()
         ]
         if len(members) > 1:
@@ -247,6 +259,8 @@ def build_scene(
             "areas": areas,
             "abr": bool(attrs.get("abr")),
             "asbr": bool(attrs.get("asbr") or attrs.get("is_asbr")),
+            "max_metric": bool(attrs.get("max_metric")),
+            "max_metric_areas": [str(a) for a in attrs.get("max_metric_areas") or ()],
             "role": _role(kind, attrs),
             "status": status,
             "stale": bool(attrs.get("stale")),
@@ -281,6 +295,12 @@ def build_scene(
             if e
         ]
         members = _parallel_members(link.ab, link.ba)
+        link_te = next((s.attrs.get("te") for s in sides if s.attrs.get("te")), None)
+        srlg_set: set[int] = set()
+        for s in sides:
+            srlg_set.update((s.attrs.get("te") or {}).get("srlgs") or ())
+            for p in s.attrs.get("parallel_links") or ():
+                srlg_set.update((p.get("te") or {}).get("srlgs") or ())
         scene_links.append(
             {
                 "id": f"{link.a}|{link.b}",
@@ -302,6 +322,8 @@ def build_scene(
                     (e["metric"] for e in ends if isinstance(e.get("metric"), int)),
                     default=None,
                 ),
+                **({"te": link_te} if link_te else {}),
+                **({"srlgs": sorted(srlg_set)} if srlg_set else {}),
             }
         )
         layout_links.append(
@@ -368,6 +390,9 @@ def build_scene(
                 {frozenset((e["source"], e["target"])) for e in diff.removed_edges}
             ),
             "metricChanges": len(diff.changed_metrics),
+            "flagChanges": len(getattr(diff, "changed_node_flags", []) or ()),
+            "prefixChanges": len(getattr(diff, "changed_prefixes", []) or ()),
+            "teChanges": len(getattr(diff, "changed_te", []) or ()),
         },
     }
 
@@ -406,6 +431,7 @@ def build_scene(
             "areas": sorted({a for n in scene_nodes.values() for a in n["areas"]}),
             "backbone": [b.id for b in layout.areas if b.backbone],
             "device_type": str(meta_graph.get("device_type") or ""),
+            "srlgs": sorted({s for lk in scene_links for s in lk.get("srlgs") or ()}),
             "history": history,
         },
         "nodes": list(scene_nodes.values()),

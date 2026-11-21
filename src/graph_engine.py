@@ -32,6 +32,7 @@ import networkx as nx
 
 from src import TrackerError, atomic_write_text, node_sort_key
 from src.correlation import CRITICAL, area_key, correlate
+from src.events import TopologyEvent, diff_to_events
 from src.vendors.base import SourceDetail
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,20 @@ def filter_diff_by_area(
         changed_metrics=[
             r for r in diff.changed_metrics if area_key(r.get("area")) == wanted
         ],
+        changed_node_flags=[
+            r
+            for r in diff.changed_node_flags
+            if r.get("id") in nodes or wanted in _areas_of(r)
+        ],
+        changed_prefixes=[
+            r
+            for r in diff.changed_prefixes
+            if area_key(r.get("area")) == wanted
+            or (not r.get("area") and r.get("router") in nodes)
+        ],
+        changed_te=[
+            r for r in diff.changed_te if area_key(r.get("area")) == wanted
+        ],
         findings=[f for f in diff.findings if f.get("router") in nodes],
         rib_checks=[c for c in diff.rib_checks if c.get("router") in nodes],
     )
@@ -218,10 +233,17 @@ class GuardConfig:
     def from_settings(cls, section: dict[str, Any] | None) -> GuardConfig:
         """Build from the ``guard`` mapping of settings.yaml (missing keys use the defaults)."""
         section = section or {}
+        if "min_node_retention" not in section and "min_known_ratio" in section:
+            logger.warning(
+                "guard.min_known_ratio is deprecated; use guard.min_node_retention"
+            )
+            retention_raw = section.get("min_known_ratio", 0.7)
+        else:
+            retention_raw = section.get("min_node_retention", 0.7)
         try:
             cfg = cls(
                 enabled=bool(section.get("enabled", True)),
-                min_node_retention=float(section.get("min_node_retention", 0.7)),
+                min_node_retention=float(retention_raw),
                 flag_partition=bool(section.get("flag_partition", True)),
             )
         except (TypeError, ValueError) as exc:
@@ -293,7 +315,27 @@ class HistoryStore:
             is_suspect     INTEGER NOT NULL,
             findings       TEXT    NOT NULL DEFAULT '[]',
             graph_json     TEXT    NOT NULL
-        )
+        );
+        CREATE TABLE IF NOT EXISTS events (
+            seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id      TEXT    NOT NULL UNIQUE,
+            run_id        TEXT    NOT NULL,
+            timestamp     TEXT    NOT NULL,
+            event_type    TEXT    NOT NULL,
+            event_name    TEXT    NOT NULL,
+            object_status TEXT    NOT NULL,
+            severity      TEXT    NOT NULL,
+            object_id     TEXT    NOT NULL,
+            detected_by   TEXT    NOT NULL,
+            area          TEXT    NOT NULL DEFAULT '',
+            summary       TEXT    NOT NULL,
+            details_json  TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_run  ON events(run_id);
+        CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, object_status);
+        CREATE INDEX IF NOT EXISTS idx_events_obj  ON events(object_id);
+        CREATE INDEX IF NOT EXISTS idx_events_det  ON events(detected_by);
     """
     _SUMMARY_COLUMNS = (
         "run_id, timestamp, node_count, link_count, added_nodes, removed_nodes, "
@@ -322,7 +364,7 @@ class HistoryStore:
         conn.row_factory = sqlite3.Row
         try:
             if create:
-                conn.execute(self._SCHEMA)
+                conn.executescript(self._SCHEMA)
             yield conn
         finally:
             conn.close()
@@ -406,16 +448,51 @@ class HistoryStore:
                 self._connect(create=True) as conn,
                 conn,
             ):  # the inner ``with`` is the transaction
+                prev_row = conn.execute(
+                    "SELECT findings FROM runs ORDER BY seq DESC LIMIT 1"
+                ).fetchone()
+                prev_findings = (
+                    json.loads(prev_row["findings"]) if prev_row else []
+                )
+                generated_events = diff_to_events(
+                    diff, graph, run_id, stamp, prev_findings=prev_findings
+                )
                 conn.execute(
                     "INSERT INTO runs (run_id, timestamp, node_count, link_count, added_nodes, removed_nodes, "
                     "added_links, removed_links, metric_changes, is_suspect, findings, graph_json) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     row,
                 )
+                if generated_events:
+                    conn.executemany(
+                        "INSERT INTO events (event_id, run_id, timestamp, event_type, event_name, "
+                        "object_status, severity, object_id, detected_by, area, summary, details_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                ev.event_id,
+                                ev.run_id,
+                                ev.timestamp,
+                                ev.event_type,
+                                ev.event_name,
+                                ev.object_status,
+                                ev.severity,
+                                ev.object_id,
+                                ev.detected_by,
+                                ev.area,
+                                ev.summary,
+                                json.dumps(ev.details, default=str),
+                            )
+                            for ev in generated_events
+                        ],
+                    )
                 if self.max_runs > 0:
                     conn.execute(
                         "DELETE FROM runs WHERE seq <= (SELECT MAX(seq) FROM runs) - ?",
                         (self.max_runs,),
+                    )
+                    conn.execute(
+                        "DELETE FROM events WHERE run_id NOT IN (SELECT run_id FROM runs)"
                     )
         except sqlite3.Error as exc:
             raise GraphEngineError(
@@ -498,6 +575,129 @@ class HistoryStore:
         rows = self._select("SELECT COUNT(*) AS n FROM runs")
         return int(rows[0]["n"]) if rows else 0
 
+    @staticmethod
+    def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "event_id": row["event_id"],
+            "run_id": row["run_id"],
+            "timestamp": row["timestamp"],
+            "event_type": row["event_type"],
+            "event_name": row["event_name"],
+            "object_status": row["object_status"],
+            "severity": row["severity"],
+            "object_id": row["object_id"],
+            "detected_by": row["detected_by"],
+            "area": row["area"],
+            "summary": row["summary"],
+            "details": json.loads(row["details_json"]),
+        }
+
+    def query_events(
+        self,
+        *,
+        limit: int = 100,
+        since: str | None = None,
+        until: str | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+        router: str | None = None,
+        prefix: str | None = None,
+        q: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Filter stored topology events newest-first and return ``(items, total_matching)``."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if since:
+            clauses.append("timestamp >= ?")
+            params.append(since)
+        if until:
+            clauses.append("timestamp <= ?")
+            params.append(until)
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if status:
+            clauses.append("object_status = ?")
+            params.append(status)
+        if severity:
+            clauses.append("severity = ?")
+            params.append(severity)
+        if router:
+            clauses.append("(detected_by = ? OR object_id = ?)")
+            params.extend([router, router])
+        if prefix:
+            clauses.append("object_id = ?")
+            params.append(prefix)
+        if q:
+            like = f"%{q}%"
+            clauses.append("(summary LIKE ? OR object_id LIKE ? OR detected_by LIKE ?)")
+            params.extend([like, like, like])
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        count_rows = self._select(
+            f"SELECT COUNT(*) AS n FROM events {where}", tuple(params)
+        )
+        total = int(count_rows[0]["n"]) if count_rows else 0
+        cap = max(1, min(int(limit), 500))
+        rows = self._select(
+            f"SELECT event_id, run_id, timestamp, event_type, event_name, object_status, "
+            f"severity, object_id, detected_by, area, summary, details_json "
+            f"FROM events {where} ORDER BY seq DESC LIMIT ?",
+            (*params, cap),
+        )
+        return [self._row_to_event(r) for r in rows], total
+
+    def event_histogram(
+        self,
+        *,
+        bucket: str = "1h",
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Aggregate event counts into chronological time buckets (``15m``, ``1h``, or ``1d``)."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if since:
+            clauses.append("timestamp >= ?")
+            params.append(since)
+        if until:
+            clauses.append("timestamp <= ?")
+            params.append(until)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._select(
+            f"SELECT timestamp, object_status, severity FROM events {where} ORDER BY seq ASC",
+            tuple(params),
+        )
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            ts_str = str(row["timestamp"] or "")
+            try:
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if bucket == "1d":
+                key = dt.strftime("%Y-%m-%dT00:00:00+00:00")
+            elif bucket == "15m":
+                minute = (dt.minute // 15) * 15
+                key = dt.replace(minute=minute, second=0, microsecond=0).isoformat()
+            else:
+                key = dt.replace(minute=0, second=0, microsecond=0).isoformat()
+            entry = buckets.setdefault(
+                key,
+                {"ts": key, "total": 0, "up": 0, "down": 0, "changed": 0, "critical": 0},
+            )
+            entry["total"] += 1
+            st = str(row["object_status"] or "")
+            if st in ("up", "resolved"):
+                entry["up"] += 1
+            elif st == "down":
+                entry["down"] += 1
+            else:
+                entry["changed"] += 1
+            if row["severity"] == CRITICAL:
+                entry["critical"] += 1
+        return [buckets[k] for k in sorted(buckets)]
+
 
 @dataclass
 class TopologyDiff:
@@ -514,6 +714,9 @@ class TopologyDiff:
     added_edges: list[dict] = field(default_factory=list)
     removed_edges: list[dict] = field(default_factory=list)
     changed_metrics: list[dict] = field(default_factory=list)
+    changed_node_flags: list[dict] = field(default_factory=list)
+    changed_prefixes: list[dict] = field(default_factory=list)
+    changed_te: list[dict] = field(default_factory=list)
     #: Why the run looks like a partial LSDB (empty = trustworthy).
     suspect_reasons: list[str] = field(default_factory=list)
     #: False when the guard kept the previous baseline instead of saving this run.
@@ -537,6 +740,9 @@ class TopologyDiff:
                 self.added_edges,
                 self.removed_edges,
                 self.changed_metrics,
+                self.changed_node_flags,
+                self.changed_prefixes,
+                self.changed_te,
             )
         )
 
@@ -577,6 +783,8 @@ class GraphEngine:
         )
         #: ID of the run ``process`` last recorded in the history (``None`` if it recorded none).
         self.last_run_id: str | None = None
+        #: Normalized ``TopologyEvent`` list emitted by the latest accepted ``process`` run.
+        self.last_events: list[TopologyEvent] = []
 
     # ------------------------------------------------------------------- build
     def build_graph(self, parsed: dict[str, Any]) -> nx.DiGraph:
@@ -708,7 +916,197 @@ class GraphEngine:
                 record.update(old_metric=old_metric, new_metric=new_metric)
                 record.pop("metric", None)
                 diff.changed_metrics.append(record)
+        diff.changed_node_flags = self._diff_node_flags(old, new)
+        diff.changed_prefixes = self._diff_prefixes(old, new)
+        diff.changed_te = self._diff_te(old, new)
         return diff
+
+    @staticmethod
+    def _diff_te(old: nx.DiGraph, new: nx.DiGraph) -> list[dict]:
+        """Detect changes to Type 10 Opaque Area TE & SRLG attributes on surviving edges."""
+        changes_out: list[dict] = []
+        fields = (
+            "te_metric",
+            "max_bw_bps",
+            "max_reservable_bw_bps",
+            "unreserved_bw_bps",
+            "admin_groups",
+            "srlgs",
+        )
+        common = sorted(
+            set(old.edges) & set(new.edges),
+            key=lambda e: (node_sort_key(e[0]), node_sort_key(e[1])),
+        )
+        for u, v in common:
+            old_te = old.edges[u, v].get("te")
+            new_te = new.edges[u, v].get("te")
+            if (old_te or None) == (new_te or None):
+                continue
+            field_diffs: dict[str, dict[str, Any]] = {}
+            for key in fields:
+                ov = (old_te or {}).get(key)
+                nv = (new_te or {}).get(key)
+                if ov != nv:
+                    field_diffs[key] = {"old": ov, "new": nv}
+            if field_diffs:
+                ref = new_te or old_te or {}
+                changes_out.append(
+                    {
+                        "source": u,
+                        "target": v,
+                        "area": str(new.edges[u, v].get("area") or ""),
+                        "local_ip": ref.get("local_ip"),
+                        "remote_ip": ref.get("remote_ip"),
+                        "changes": field_diffs,
+                    }
+                )
+        return changes_out
+
+    @staticmethod
+    def _diff_node_flags(old: nx.DiGraph, new: nx.DiGraph) -> list[dict]:
+        """Detect changes to abr/asbr/max_metric flags on surviving router nodes."""
+        changes: list[dict] = []
+        common = sorted(set(old.nodes) & set(new.nodes), key=node_sort_key)
+        for nid in common:
+            old_d, new_d = old.nodes[nid], new.nodes[nid]
+            if old_d.get("type") == "network" or new_d.get("type") == "network":
+                continue
+            areas = [str(a) for a in (new_d.get("areas") or ())]
+            for attr, old_val, new_val in (
+                ("abr", bool(old_d.get("abr")), bool(new_d.get("abr"))),
+                (
+                    "asbr",
+                    bool(old_d.get("asbr") or old_d.get("is_asbr")),
+                    bool(new_d.get("asbr") or new_d.get("is_asbr")),
+                ),
+                (
+                    "max_metric",
+                    bool(old_d.get("max_metric")),
+                    bool(new_d.get("max_metric")),
+                ),
+            ):
+                if old_val != new_val:
+                    changes.append(
+                        {
+                            "id": nid,
+                            "label": display_name(nid, new_d),
+                            "attribute": attr,
+                            "old": old_val,
+                            "new": new_val,
+                            "areas": areas,
+                        }
+                    )
+        return changes
+
+    @staticmethod
+    def _extract_prefixes(graph: nx.DiGraph) -> dict[tuple[str, str, str, str], dict]:
+        """Collect normalized (router, area, kind, prefix) records across stub, transit, external, and NSSA."""
+        records: dict[tuple[str, str, str, str], dict] = {}
+        for nid, d in graph.nodes(data=True):
+            if d.get("type") == "network":
+                prefix = d.get("prefix")
+                if prefix:
+                    area = str(
+                        d.get("area") or next(iter(d.get("areas") or ()), "") or ""
+                    )
+                    router = str(d.get("dr") or nid)
+                    records[(router, area, "transit", str(prefix))] = {
+                        "prefix": str(prefix),
+                        "router": router,
+                        "kind": "transit",
+                        "subtype": None,
+                        "area": area,
+                        "metric": 0,
+                    }
+                continue
+            default_area = str(next(iter(d.get("areas") or ()), "") or "")
+            for p in d.get("prefixes") or ():
+                if not p.get("prefix"):
+                    continue
+                area = str(p.get("area") or default_area)
+                prefix = str(p["prefix"])
+                records[(nid, area, "stub", prefix)] = {
+                    "prefix": prefix,
+                    "router": nid,
+                    "kind": "stub",
+                    "subtype": None,
+                    "area": area,
+                    "metric": p.get("metric"),
+                }
+            for ext in d.get("externals") or ():
+                if not ext.get("prefix"):
+                    continue
+                mtype = ext.get("metric_type")
+                kind = "nssa" if mtype in ("N1", "N2") else "external"
+                area = str(ext.get("area") or "")
+                prefix = str(ext["prefix"])
+                records[(nid, area, kind, prefix)] = {
+                    "prefix": prefix,
+                    "router": nid,
+                    "kind": kind,
+                    "subtype": mtype,
+                    "area": area,
+                    "metric": ext.get("metric"),
+                }
+        return records
+
+    @classmethod
+    def _diff_prefixes(cls, old: nx.DiGraph, new: nx.DiGraph) -> list[dict]:
+        """Compute added, removed, and metric/subtype-changed prefixes between baselines."""
+        old_map = cls._extract_prefixes(old)
+        new_map = cls._extract_prefixes(new)
+        changes: list[dict] = []
+
+        def _sort_key(k: tuple[str, str, str, str]) -> tuple:
+            return (node_sort_key(k[0]), k[1], k[2], k[3])
+
+        for key in sorted(new_map.keys() - old_map.keys(), key=_sort_key):
+            rec = new_map[key]
+            changes.append(
+                {
+                    "action": "added",
+                    "prefix": rec["prefix"],
+                    "router": rec["router"],
+                    "kind": rec["kind"],
+                    "subtype": rec["subtype"],
+                    "area": rec["area"],
+                    "old_metric": None,
+                    "new_metric": rec["metric"],
+                }
+            )
+        for key in sorted(old_map.keys() - new_map.keys(), key=_sort_key):
+            rec = old_map[key]
+            changes.append(
+                {
+                    "action": "removed",
+                    "prefix": rec["prefix"],
+                    "router": rec["router"],
+                    "kind": rec["kind"],
+                    "subtype": rec["subtype"],
+                    "area": rec["area"],
+                    "old_metric": rec["metric"],
+                    "new_metric": None,
+                }
+            )
+        for key in sorted(old_map.keys() & new_map.keys(), key=_sort_key):
+            o_rec, n_rec = old_map[key], new_map[key]
+            if (
+                o_rec["metric"] != n_rec["metric"]
+                or o_rec["subtype"] != n_rec["subtype"]
+            ):
+                changes.append(
+                    {
+                        "action": "changed",
+                        "prefix": n_rec["prefix"],
+                        "router": n_rec["router"],
+                        "kind": n_rec["kind"],
+                        "subtype": n_rec["subtype"],
+                        "area": n_rec["area"],
+                        "old_metric": o_rec["metric"],
+                        "new_metric": n_rec["metric"],
+                    }
+                )
+        return changes
 
     # ---------------------------------------------------------------- area view
     @staticmethod
@@ -815,6 +1213,7 @@ class GraphEngine:
         if report.area_coverage is not None:
             diff.area_coverage = report.area_coverage.to_dict()
 
+        self.last_events = []
         if dry_run:
             diff.baseline_updated = False
             logger.info("Dry run — topology built and diffed; no state files written")
@@ -830,6 +1229,11 @@ class GraphEngine:
             self._append_changelog(diff, graph)
             return graph, diff
 
+        prev_findings = (
+            self.history.findings(self.last_run_id)
+            if (self.history is not None and self.last_run_id)
+            else []
+        )
         if self.rotate_state():
             logger.debug("Rotated %s -> %s", self.current_path, self.previous_path)
         self.save_graph(graph)
@@ -838,6 +1242,19 @@ class GraphEngine:
         )  # any earlier suspect snapshot is now stale
         self._append_changelog(diff, graph)
         self._record_history(graph, diff)
+        if self.last_run_id and self.history is not None:
+            raw_events, _ = self.history.query_events(limit=500)
+            self.last_events = [
+                TopologyEvent(**e) for e in raw_events if e["run_id"] == self.last_run_id
+            ]
+        else:
+            self.last_events = diff_to_events(
+                diff,
+                graph,
+                run_id="ephemeral",
+                timestamp=datetime.now(UTC).isoformat(timespec="seconds"),
+                prev_findings=prev_findings,
+            )
         return graph, diff
 
     def _record_history(self, graph: nx.DiGraph, diff: TopologyDiff) -> None:
@@ -866,6 +1283,9 @@ class GraphEngine:
             "added_edges": len(diff.added_edges),
             "removed_edges": len(diff.removed_edges),
             "changed_metrics": len(diff.changed_metrics),
+            "changed_node_flags": len(diff.changed_node_flags),
+            "changed_prefixes": len(diff.changed_prefixes),
+            "changed_te": len(diff.changed_te),
         }
         for key, count in (
             ("stale_nodes", len(graph.graph.get("stale_nodes") or [])),

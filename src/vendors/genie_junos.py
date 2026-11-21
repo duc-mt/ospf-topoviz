@@ -26,12 +26,15 @@ from src.vendors.base import (
     NetworkLsa,
     ParserError,
     RouterLsa,
+    TeLinkLsa,
     as_list,
+    dotted_area,
     dotted_mask,
     link_kind,
     normalize_state,
     parse_dead_time,
     parse_seq,
+    parse_te_bandwidth_bps,
     role_from_dr,
 )
 
@@ -205,6 +208,12 @@ class GenieJunosAdapter(LsdbAdapter):
             )
         return router
 
+    def parse_opaque_te(
+        self, raw_opaque: str, process_id: str | None
+    ) -> list[TeLinkLsa]:
+        """Parse Junos ``show ospf database opaque-area extensive`` output."""
+        return parse_junos_opaque_te_text(raw_opaque)
+
     def _network_lsa(self, area: str, lsa: dict) -> NetworkLsa:
         body = lsa.get("ospf-network-lsa") or {}
         return NetworkLsa(
@@ -216,3 +225,89 @@ class GenieJunosAdapter(LsdbAdapter):
             seq=parse_seq(lsa.get("sequence-number")),
             age=_int(lsa.get("age")),
         )
+
+
+_JUNOS_OPAQ_AREA = re.compile(r"OSPF database,\s+Area\s+(\S+)", re.IGNORECASE)
+_JUNOS_OPAQ_ROW = re.compile(
+    r"^\s*OpaqArea\s+(\S+)\s+(\S+)\s+(0x[0-9a-fA-F]+|\S+)\s+(\d+)",
+    re.IGNORECASE,
+)
+
+
+def parse_junos_opaque_te_text(raw: str) -> list[TeLinkLsa]:
+    """Parse Junos ``show ospf database opaque-area extensive`` TE Link TLVs without Genie dependency."""
+    results: list[TeLinkLsa] = []
+    area = "0.0.0.0"
+    cur: dict | None = None
+
+    def flush() -> None:
+        nonlocal cur
+        if cur is not None and cur.get("adv") and cur.get("link_id"):
+            prios = cur.get("unreserved") or {}
+            unres = [prios.get(i, 0.0) for i in range(8)] if prios else []
+            results.append(
+                TeLinkLsa(
+                    adv_router=cur["adv"],
+                    area=dotted_area(cur["area"]),
+                    link_id=cur["link_id"],
+                    local_ip=cur.get("local_ip"),
+                    remote_ip=cur.get("remote_ip"),
+                    te_metric=cur.get("te_metric"),
+                    max_bw_bps=cur.get("max_bw_bps"),
+                    max_reservable_bw_bps=cur.get("max_res_bw_bps"),
+                    unreserved_bw_bps=unres,
+                    admin_groups=cur.get("admin_groups"),
+                    srlgs=sorted(cur.get("srlgs") or ()),
+                    age=cur.get("age"),
+                    seq=cur.get("seq"),
+                )
+            )
+        cur = None
+
+    for line in (raw or "").splitlines():
+        if m := _JUNOS_OPAQ_AREA.search(line):
+            flush()
+            area = m.group(1)
+            continue
+        if m := _JUNOS_OPAQ_ROW.match(line):
+            flush()
+            cur = {
+                "area": area,
+                "adv": _clean(m.group(2)),
+                "seq": parse_seq(m.group(3)),
+                "age": int(m.group(4)),
+                "srlgs": set(),
+                "unreserved": {},
+            }
+            continue
+        if cur is None:
+            continue
+        if m := re.search(r"Link ID\s*\(\d+\)[^:]*:\s*(\d+\.\d+\.\d+\.\d+)", line, re.IGNORECASE):
+            cur["link_id"] = m.group(1)
+        elif m := re.search(r"Local interface IP address[^:]*:\s*(\d+\.\d+\.\d+\.\d+)", line, re.IGNORECASE):
+            cur["local_ip"] = m.group(1)
+        elif m := re.search(r"Remote interface IP address[^:]*:\s*(\d+\.\d+\.\d+\.\d+)", line, re.IGNORECASE):
+            cur["remote_ip"] = m.group(1)
+        elif m := re.search(r"Traffic engineering metric[^:]*:\s*(\d+)", line, re.IGNORECASE):
+            cur["te_metric"] = int(m.group(1))
+        elif m := re.search(r"Maximum bandwidth[^:]*:\s*(.+)", line, re.IGNORECASE):
+            bw = parse_te_bandwidth_bps(m.group(1))
+            if bw is not None:
+                cur["max_bw_bps"] = bw
+        elif m := re.search(r"Maximum reservable bandwidth[^:]*:\s*(.+)", line, re.IGNORECASE):
+            bw = parse_te_bandwidth_bps(m.group(1))
+            if bw is not None:
+                cur["max_res_bw_bps"] = bw
+        elif m := re.search(r"Administrative group[^:]*:\s*(0x[0-9a-fA-F]+|\d+)", line, re.IGNORECASE):
+            v = m.group(1)
+            cur["admin_groups"] = int(v, 16) if v.lower().startswith("0x") else int(v)
+        elif m := re.search(r"Shared risk link group[^:]*:\s*(.+)", line, re.IGNORECASE):
+            for tok in re.findall(r"\b\d+\b", m.group(1)):
+                cur["srlgs"].add(int(tok))
+        elif "Priority" in line:
+            for pm in re.finditer(r"Priority\s*([0-7])\s*:\s*([^,]+)", line, re.IGNORECASE):
+                bw = parse_te_bandwidth_bps(pm.group(2))
+                if bw is not None:
+                    cur["unreserved"][int(pm.group(1))] = bw
+    flush()
+    return results

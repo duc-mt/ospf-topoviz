@@ -31,11 +31,13 @@ from src.vendors.base import (
     NetworkLsa,
     ParserError,
     RouterLsa,
+    TeLinkLsa,
     dotted_mask,
     link_kind,
     normalize_state,
     parse_dead_time,
     parse_seq,
+    parse_te_bandwidth_bps,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,42 @@ _LINK_DATA = re.compile(rf"^\s*\(Link\s+Data\)\s*[^:]*:\s*({_IP})", re.IGNORECAS
 _METRIC = re.compile(r"^\s*TOS\s+0\s+Metrics?\s*:\s*(\d+)", re.IGNORECASE)
 _MASK = re.compile(r"^\s*Network\s+Mask\s*:\s*(\S+)", re.IGNORECASE)
 _ATTACHED = re.compile(rf"^\s*Attached\s+Router\s*:\s*({_IP})", re.IGNORECASE)
+_OPAQUE_AREA_HDR = re.compile(
+    r"(?:Opaque|Area\s+Opaque|Type-10\s+Opaque)[^\n(]*\(Area\s+([\d.]+)[^)]*\)",
+    re.IGNORECASE,
+)
+_SUBTLV_HDR = re.compile(r"^\s*Sub-TLV\s+Type\s*:", re.IGNORECASE)
+_TE_LINK_ID = re.compile(rf"^\s*Link\s+ID\s*:\s*({_IP})", re.IGNORECASE)
+_TE_LOCAL_IP = re.compile(
+    rf"^\s*(?:Local\s+Interface\s+IP\s+Address|Interface\s+Address)\s*:\s*({_IP})",
+    re.IGNORECASE,
+)
+_TE_REMOTE_IP = re.compile(
+    rf"^\s*(?:Remote\s+Interface\s+IP\s+Address|Neighbor\s+Address)\s*:\s*({_IP})",
+    re.IGNORECASE,
+)
+_TE_METRIC = re.compile(
+    r"^\s*(?:Traffic\s+Engineering\s+Metric|TE\s+Metric)\s*:\s*(\d+)",
+    re.IGNORECASE,
+)
+_TE_MAX_BW = re.compile(
+    r"^\s*(?:Maximum\s+Bandwidth|Max\.?\s+Bandwidth|Physical\s+Bandwidth)\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_TE_MAX_RES_BW = re.compile(
+    r"^\s*(?:Maximum\s+Reservable\s+Bandwidth|Max\.?\s+Reservable\s+Bandwidth|Res\.\s+Global\s+BW)\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+_TE_UNRES_PRIO = re.compile(
+    r"^\s*(?:Res\.\s+BW\s+)?Priority\s*([0-7])\s*:\s*(.+)", re.IGNORECASE
+)
+_TE_ADMIN_GROUP = re.compile(
+    r"^\s*(?:Resource\s+Class/Color|Admin\.?\s*Group|Administrative\s+Group)\s*:\s*(0x[0-9a-fA-F]+|\d+)",
+    re.IGNORECASE,
+)
+_TE_SRLG = re.compile(
+    r"^\s*(?:Shared\s+Risk\s+Link\s+Group|SRLG)\s*:\s*(.+)", re.IGNORECASE
+)
 
 DEFAULT_VRF = "default"
 
@@ -220,6 +258,12 @@ class CiscoStyleTextAdapter(LsdbAdapter):
                 if external is not None:
                     (type7 if external.is_nssa else type5).append(external)
         return type5, type7
+
+    def parse_opaque_te(
+        self, raw_opaque: str, process_id: str | None
+    ) -> list[TeLinkLsa]:
+        """Parse Type 10 Opaque Area TE Link LSAs (RFC 3630 / RFC 4203 SRLGs)."""
+        return parse_cisco_style_opaque_te(raw_opaque, process_id)
 
     @staticmethod
     def _external_from(lsa: _Lsa) -> ExternalLsa | None:
@@ -431,3 +475,106 @@ class _Seen:
     processes: set[str] = field(default_factory=set)
     #: ``(router ID, process, vrf)`` of every "OSPF Router with ID" banner, in order.
     headers: list[tuple[str, str | None, str | None]] = field(default_factory=list)
+
+
+def parse_cisco_style_opaque_te(
+    raw: str, process_id: str | None = None
+) -> list[TeLinkLsa]:
+    """Parse Cisco/FRR/Arista-style Type 10 Opaque Area TE Link LSAs into ``TeLinkLsa`` records."""
+    results: list[TeLinkLsa] = []
+    process: str | None = None
+    vrf: str | None = None
+    area = UNKNOWN_AREA
+    cur: dict | None = None
+
+    def flush() -> None:
+        nonlocal cur
+        if cur is None:
+            return
+        if (vrf is None or vrf == DEFAULT_VRF) and (
+            process_id is None or process in (None, process_id)
+        ):
+            lsa_type = cur.get("lsa_type", "").lower()
+            adv = cur.get("adv") or ""
+            link_id = cur.get("link_id") or ""
+            if "opaque" in lsa_type and adv and link_id:
+                prios = cur.get("unreserved") or {}
+                unres = [prios.get(i, 0.0) for i in range(8)] if prios else []
+                results.append(
+                    TeLinkLsa(
+                        adv_router=adv,
+                        area=dotted_area(cur["area"]),
+                        link_id=link_id,
+                        local_ip=cur.get("local_ip"),
+                        remote_ip=cur.get("remote_ip"),
+                        te_metric=cur.get("te_metric"),
+                        max_bw_bps=cur.get("max_bw_bps"),
+                        max_reservable_bw_bps=cur.get("max_res_bw_bps"),
+                        unreserved_bw_bps=unres,
+                        admin_groups=cur.get("admin_groups"),
+                        srlgs=sorted(cur.get("srlgs") or ()),
+                        age=cur.get("age"),
+                        seq=cur.get("seq"),
+                    )
+                )
+        cur = None
+
+    for line in (raw or "").splitlines():
+        if header := _HEADER.search(line):
+            flush()
+            rest = header.group(2)
+            p, v = _PROCESS.search(rest), _VRF.search(rest)
+            process = p.group(1) if p else None
+            vrf = v.group(1) if v else None
+            area = UNKNOWN_AREA
+            continue
+        if m := _OPAQUE_AREA_HDR.search(line):
+            flush()
+            area = m.group(1)
+            continue
+        if _LS_START.match(line):
+            flush()
+            age = _LS_AGE.match(line)
+            cur = {
+                "area": area,
+                "age": int(age.group(1)) if age else None,
+                "srlgs": set(),
+                "unreserved": {},
+            }
+            continue
+        if cur is None or _SUBTLV_HDR.match(line):
+            continue
+        if m := _LS_TYPE.match(line):
+            cur["lsa_type"] = m.group(1)
+        elif m := _ADV.match(line):
+            cur["adv"] = m.group(1)
+        elif m := _LS_SEQ.match(line):
+            cur["seq"] = parse_seq(m.group(1))
+        elif m := _TE_LINK_ID.match(line):
+            cur["link_id"] = m.group(1)
+        elif m := _TE_LOCAL_IP.match(line):
+            cur["local_ip"] = m.group(1)
+        elif m := _TE_REMOTE_IP.match(line):
+            cur["remote_ip"] = m.group(1)
+        elif m := _TE_METRIC.match(line):
+            cur["te_metric"] = int(m.group(1))
+        elif m := _TE_MAX_BW.match(line):
+            bw = parse_te_bandwidth_bps(m.group(1))
+            if bw is not None:
+                cur["max_bw_bps"] = bw
+        elif m := _TE_MAX_RES_BW.match(line):
+            bw = parse_te_bandwidth_bps(m.group(1))
+            if bw is not None:
+                cur["max_res_bw_bps"] = bw
+        elif m := _TE_UNRES_PRIO.match(line):
+            bw = parse_te_bandwidth_bps(m.group(2))
+            if bw is not None:
+                cur["unreserved"][int(m.group(1))] = bw
+        elif m := _TE_ADMIN_GROUP.match(line):
+            val = m.group(1)
+            cur["admin_groups"] = int(val, 16) if val.lower().startswith("0x") else int(val)
+        elif m := _TE_SRLG.match(line):
+            for tok in re.findall(r"\b\d+\b", m.group(1)):
+                cur["srlgs"].add(int(tok))
+    flush()
+    return results

@@ -28,6 +28,7 @@ from src.vendors.base import (
     NetworkLsa,
     ParserError,
     RouterLsa,
+    TeLinkLsa,
     link_kind,
     normalize_state,
     parse_dead_time,
@@ -104,6 +105,14 @@ class GenieCiscoAdapter(LsdbAdapter):
         if self._external_text is None:
             return [], []
         return self._external_text.parse_external(raw_external, raw_nssa, process_id)
+
+    def parse_opaque_te(
+        self, raw_opaque: str, process_id: str | None
+    ) -> list[TeLinkLsa]:
+        """Parse Type 10 Opaque Area TE Link LSAs via the Cisco-style text TE parser."""
+        from src.vendors.cisco_style import parse_cisco_style_opaque_te
+
+        return parse_cisco_style_opaque_te(raw_opaque, process_id)
 
     # ------------------------------------------------------------------ Genie
     def _genie(

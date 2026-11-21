@@ -27,6 +27,7 @@ KIND_P2P = "p2p"
 KIND_TRANSIT = "transit"
 KIND_STUB = "stub"
 KIND_VIRTUAL = "virtual"
+MAX_METRIC_VALUE = 65535
 
 # OSPF route types as the neutral model spells them (``OSPFRoute.route_type``).
 ROUTE_INTRA = "Intra-Area"
@@ -88,6 +89,18 @@ class RouterLsa:
     #: The router's own B (area border router) and E (AS boundary router) bits.
     abr: bool = False
     asbr: bool = False
+    #: RFC 6987 / RFC 3137 stub-router advertisement (max-metric links).
+    max_metric: bool = False
+
+
+def is_max_metric_lsa(lsa: RouterLsa) -> bool:
+    """True if ``lsa`` is an RFC 6987 stub-router advertisement (all non-stub links have metric 65535)."""
+    if lsa.max_metric:
+        return True
+    non_stub = [link for link in lsa.links if link.kind != KIND_STUB]
+    return bool(non_stub) and all(
+        link.metric == MAX_METRIC_VALUE for link in non_stub
+    )
 
 
 @dataclass
@@ -143,6 +156,25 @@ class ExternalLsa:
 
 
 @dataclass
+class TeLinkLsa:
+    """Type 10 Opaque Area Traffic Engineering Link LSA (RFC 3630 / RFC 4203)."""
+
+    adv_router: str
+    area: str
+    link_id: str
+    local_ip: str | None = None
+    remote_ip: str | None = None
+    te_metric: int | None = None
+    max_bw_bps: float | None = None
+    max_reservable_bw_bps: float | None = None
+    unreserved_bw_bps: list[float] = field(default_factory=list)
+    admin_groups: int | None = None
+    srlgs: list[int] = field(default_factory=list)
+    age: int | None = None
+    seq: int | None = None
+
+
+@dataclass
 class Lsdb:
     """Everything an adapter extracted from one poll."""
 
@@ -156,6 +188,8 @@ class Lsdb:
     external_lsas: list[ExternalLsa] = field(default_factory=list)
     #: Type 7 LSAs (external routes inside an NSSA). Empty when they were not collected.
     nssa_lsas: list[ExternalLsa] = field(default_factory=list)
+    #: Type 10 Opaque Area TE Link LSAs (RFC 3630 / RFC 4203).
+    te_lsas: list[TeLinkLsa] = field(default_factory=list)
     #: IP version of the routing domain this LSDB describes: 4 (OSPFv2) or 6 (OSPFv3).
     ip_version: int = 4
 
@@ -291,6 +325,40 @@ class LsdbAdapter(ABC):
         from src.vendors.routes import parse_routes
 
         return parse_routes(self.route_format, raw, process_id)
+
+    def parse_opaque_te(
+        self, raw_opaque: str, process_id: str | None
+    ) -> list[TeLinkLsa]:
+        """Parse Type 10 Opaque Area TE Link LSAs; platforms without support return ``[]``."""
+        return []
+
+
+_BW_RE = re.compile(
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*\(?\s*(gbps|mbps|kbps|bits/sec|bps|bytes/sec|b/s)?",
+    re.IGNORECASE,
+)
+
+
+def parse_te_bandwidth_bps(text: str) -> float | None:
+    """Normalize a printed OSPF-TE bandwidth value (bytes/sec, bps, kbps, Mbps, Gbps) to float bits/sec."""
+    m = _BW_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+    except ValueError:
+        return None
+    unit = (m.group(2) or "").lower()
+    if unit == "gbps":
+        return val * 1_000_000_000.0
+    if unit == "mbps":
+        return val * 1_000_000.0
+    if unit == "kbps":
+        return val * 1_000.0
+    if unit in ("bits/sec", "bps"):
+        return val
+    # RFC 3630 raw IEEE-754 float values default to bytes/sec when printed without explicit bps units
+    return val * 8.0
 
 
 # --------------------------------------------------------------------- helpers

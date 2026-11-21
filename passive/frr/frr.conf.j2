@@ -1,0 +1,19 @@
+frr defaults traditional
+hostname ospf-passive-listener
+!
+ip forwarding
+!
+route-map TO_KERNEL deny 200
+!
+ip protocol ospf route-map TO_KERNEL
+!
+interface {{ iface_name }}
+ ip ospf network point-to-point
+!
+router ospf
+ ospf router-id {{ router_id }}
+ network {{ interface_cidr }} area {{ ospf_area }}
+ capability opaque
+!
+line vty
+!
